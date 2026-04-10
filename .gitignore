@@ -1,0 +1,19 @@
+# Node
+node_modules
+.next
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# SQLite
+*.db
+
+# OS
+.DS_Store
+
+# uploads & generated files
+uploads/
+stems/
+generated/
