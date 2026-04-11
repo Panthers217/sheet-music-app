@@ -12,3 +12,17 @@ node_modules/
 backend/data/
 backend/uploads/
 frontend/.env.local
+
+# Python virtual environments
+.venv/
+backend/.venv/
+
+# Python tooling and test artifacts
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Logs and OS files
+*.log
+.DS_Store
