@@ -1,19 +1,14 @@
-# Node
-node_modules
-.next
-
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
+
+# Node
+node_modules/
+.next/
+
+# Local env/data
 .env
-
-# SQLite
-*.db
-
-# OS
-.DS_Store
-
-# uploads & generated files
-uploads/
-stems/
-generated/
+backend/data/
+backend/uploads/
+frontend/.env.local
