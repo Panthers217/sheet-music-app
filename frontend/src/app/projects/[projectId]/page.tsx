@@ -16,6 +16,12 @@ type Song = {
   id: number;
   title: string;
   original_filename: string;
+  stems: {
+    id: number;
+    stem_type: string;
+    file_path: string;
+    status: string;
+  }[];
   chart: Chart | null;
 };
 
@@ -102,7 +108,7 @@ export default function ProjectDetailPage() {
             Audio file
             <input
               type="file"
-              accept="audio/*"
+              accept=".mp3,.wav,audio/mpeg,audio/wav"
               onChange={(event) => setFile(event.target.files?.[0] ?? null)}
               required
             />
@@ -117,6 +123,17 @@ export default function ProjectDetailPage() {
           {project.songs.map((song) => (
             <li key={song.id}>
               {song.title} ({song.original_filename})
+              {song.stems.length > 0 ? (
+                <ul>
+                  {song.stems.map((stem) => (
+                    <li key={stem.id}>
+                      Stem: {stem.stem_type} | Status: {stem.status}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>No stems yet.</p>
+              )}
             </li>
           ))}
         </ul>

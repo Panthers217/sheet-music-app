@@ -7,10 +7,10 @@ MVP scaffold for a music analysis + chart generation workflow with a thin vertic
 - Next.js frontend for project management, audio upload, and chart editing.
 - FastAPI backend with SQLite metadata persistence.
 - Local filesystem upload storage (metadata in DB, files on disk).
-- Placeholder processing pipeline that seeds:
-  - processing job
-  - default stems (`drums`, `bass`, `vocals`, `other`)
-  - initial editable chart content
+- Processing pipeline that runs Demucs stem separation and seeds:
+   - processing job status
+   - stems (`drums`, `bass`, `vocals`, `other`)
+   - initial editable chart content
 
 ## Repository structure
 
@@ -56,6 +56,8 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+Note: real stem separation requires `ffmpeg` to be available on the system PATH.
+
 ### 2) Frontend
 
 ```bash
@@ -99,9 +101,9 @@ Tables are created automatically on backend startup.
 1. Create a project in the UI.
 2. Upload an audio file for that project.
 3. Backend stores file metadata + local file path.
-4. Placeholder processing pipeline creates:
-   - a completed placeholder processing job,
-   - default stems metadata,
+4. Processing pipeline creates:
+   - a processing job (`queued` -> `running` -> `completed`/`failed`),
+   - stem files and metadata,
    - starter chart edit JSON text.
 5. Project detail page displays songs and provides a basic editable chart text area.
 
