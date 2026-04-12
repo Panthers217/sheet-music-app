@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
 
 import { API_BASE_URL, apiFetch } from "@/components/api";
 
@@ -25,15 +26,16 @@ type Project = {
   songs: Song[];
 };
 
-export default function ProjectDetailPage({ params }: { params: { projectId: string } }) {
-  const projectId = useMemo(() => Number(params.projectId), [params.projectId]);
+export default function ProjectDetailPage() {
+  const { projectId } = useParams<{ projectId: string }>();
+  const numericProjectId = useMemo(() => Number(projectId), [projectId]);
   const [project, setProject] = useState<Project | null>(null);
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [chartText, setChartText] = useState("");
 
   async function loadProject() {
-    const data = await apiFetch<Project>(`/api/projects/${projectId}`);
+    const data = await apiFetch<Project>(`/api/projects/${numericProjectId}`);
     setProject(data);
     const latestSong = data.songs[0];
     if (latestSong?.chart) {
@@ -43,7 +45,7 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
 
   useEffect(() => {
     loadProject().catch(console.error);
-  }, [projectId]);
+  }, [numericProjectId]);
 
   async function onUpload(event: FormEvent) {
     event.preventDefault();
@@ -55,7 +57,7 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
     formData.append("title", title);
     formData.append("file", file);
 
-    await fetch(`${API_BASE_URL}/api/projects/${projectId}/upload`, {
+    await fetch(`${API_BASE_URL}/api/projects/${numericProjectId}/upload`, {
       method: "POST",
       body: formData,
     });
