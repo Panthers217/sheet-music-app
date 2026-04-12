@@ -2,12 +2,12 @@ import os
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.db import get_db
-from app.models import ChartEdit, Project, Song
-from app.schemas import ChartEditResponse, ChartEditUpdate, ProjectCreate, ProjectResponse
+from app.db import SessionLocal, get_db
+from app.models import ChartEdit, ProcessingJob, Project, Song
+from app.schemas import ChartEditResponse, ChartEditUpdate, ProjectCreate, ProjectResponse, ProjectUpdate
 from app.services.processing import PlaceholderProcessingPipeline
 
 router = APIRouter(prefix="/api")
@@ -35,6 +35,30 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> Pro
 @router.get("/projects", response_model=list[ProjectResponse])
 def list_projects(db: Session = Depends(get_db)) -> list[Project]:
     return db.query(Project).order_by(Project.created_at.desc()).all()
+
+
+@router.put("/projects/{project_id}", response_model=ProjectResponse)
+def update_project(project_id: int, payload: ProjectUpdate, db: Session = Depends(get_db)) -> Project:
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project.name = payload.name
+    project.description = payload.description
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+@router.delete("/projects/{project_id}", status_code=204)
+def delete_project(project_id: int, db: Session = Depends(get_db)) -> None:
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    db.delete(project)
+    db.commit()
+    project_dir = UPLOAD_DIR / str(project_id)
+    if project_dir.is_dir():
+        shutil.rmtree(project_dir)
 
 
 @router.get("/projects/{project_id}")
@@ -75,9 +99,28 @@ def get_project(project_id: int, db: Session = Depends(get_db)) -> dict:
     }
 
 
+def _run_processing_background(song_id: int) -> None:
+    """Run the processing pipeline in a background task with its own DB session."""
+    db = SessionLocal()
+    try:
+        song = db.query(Song).filter(Song.id == song_id).first()
+        if not song:
+            return
+        job = db.query(ProcessingJob).filter(ProcessingJob.song_id == song_id).order_by(ProcessingJob.id.desc()).first()
+        if not job:
+            return
+        pipeline.run_processing(db=db, song=song, job=job)
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 @router.post("/projects/{project_id}/upload")
 def upload_song(
     project_id: int,
+    background_tasks: BackgroundTasks,
     title: str = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -110,12 +153,22 @@ def upload_song(
     db.add(song)
     db.flush()
 
-    job = pipeline.enqueue_song_processing(db=db, song=song)
+    job = pipeline.enqueue_song_processing_async(db=db, song=song)
 
     db.commit()
     db.refresh(song)
 
+    background_tasks.add_task(_run_processing_background, song.id)
+
     return {"song_id": song.id, "processing_job_id": job.id, "status": job.status}
+
+
+@router.get("/jobs/{job_id}")
+def get_job_status(job_id: int, db: Session = Depends(get_db)) -> dict:
+    job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"job_id": job.id, "status": job.status, "job_type": job.job_type}
 
 
 @router.put("/charts/{chart_id}", response_model=ChartEditResponse)

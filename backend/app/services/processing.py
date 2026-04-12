@@ -48,7 +48,8 @@ class PlaceholderProcessingPipeline:
             )
         )
 
-    def enqueue_song_processing(self, db: Session, song: Song) -> ProcessingJob:
+    def enqueue_song_processing_async(self, db: Session, song: Song) -> ProcessingJob:
+        """Create the DB records immediately and return. Processing runs separately."""
         job = ProcessingJob(song_id=song.id, job_type="stem_split_and_chart_seed", status="queued")
         db.add(job)
         db.flush()
@@ -70,8 +71,15 @@ class PlaceholderProcessingPipeline:
                 )
             )
         db.flush()
+        return job
 
+    def run_processing(self, db: Session, song: Song, job: ProcessingJob) -> None:
+        """Execute the heavy Demucs processing. Meant to be called in a background task."""
         job.status = "running"
+        db.flush()
+
+        song_path = Path(song.file_path)
+        output_root = song_path.parent / "stems"
 
         try:
             separated_dir = self._run_demucs(input_path=song_path, output_root=output_root)
@@ -89,4 +97,3 @@ class PlaceholderProcessingPipeline:
             for stem in db.query(Stem).filter(Stem.song_id == song.id).all():
                 stem.status = "failed"
             job.status = "failed"
-        return job
