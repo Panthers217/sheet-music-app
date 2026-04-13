@@ -31,7 +31,11 @@ class PlaceholderProcessingPipeline:
             str(output_root),
             str(input_path),
         ]
-        subprocess.run(command, check=True, capture_output=True, text=True)
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode, command, result.stdout, result.stderr
+            )
         return output_root / model_name / input_path.stem
 
     def _seed_chart_if_missing(self, db: Session, song: Song) -> None:
@@ -93,7 +97,13 @@ class PlaceholderProcessingPipeline:
                     stem.status = "failed"
 
             job.status = "completed"
-        except (subprocess.CalledProcessError, OSError):
+        except (subprocess.CalledProcessError, OSError) as exc:
+            import logging
+            logger = logging.getLogger(__name__)
+            if isinstance(exc, subprocess.CalledProcessError):
+                logger.error("Demucs failed (exit %s):\n%s", exc.returncode, exc.stderr)
+            else:
+                logger.error("Demucs OSError: %s", exc)
             for stem in db.query(Stem).filter(Stem.song_id == song.id).all():
                 stem.status = "failed"
             job.status = "failed"

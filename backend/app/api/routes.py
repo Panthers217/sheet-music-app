@@ -171,6 +171,20 @@ def get_job_status(job_id: int, db: Session = Depends(get_db)) -> dict:
     return {"job_id": job.id, "status": job.status, "job_type": job.job_type}
 
 
+@router.post("/songs/{song_id}/reprocess")
+def reprocess_song(song_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> dict:
+    song = db.query(Song).filter(Song.id == song_id).first()
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+    if not Path(song.file_path).exists():
+        raise HTTPException(status_code=400, detail="Audio file not found on disk")
+
+    job = pipeline.enqueue_song_processing_async(db=db, song=song)
+    db.commit()
+    background_tasks.add_task(_run_processing_background, song.id)
+    return {"song_id": song.id, "processing_job_id": job.id, "status": job.status}
+
+
 @router.put("/charts/{chart_id}", response_model=ChartEditResponse)
 def update_chart(chart_id: int, payload: ChartEditUpdate, db: Session = Depends(get_db)) -> ChartEdit:
     chart = db.query(ChartEdit).filter(ChartEdit.id == chart_id).first()
