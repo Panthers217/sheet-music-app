@@ -19,7 +19,11 @@ class ScoreNote:
     pitch: str = "C4"
     duration: str = "quarter"  # "whole" | "half" | "quarter" | "eighth" | "16th"
     is_rest: bool = False
-    position: int = 0
+    position: int = 0  # 16th-note grid offset within measure (0 = beat 1)
+    # Playback readiness fields — populated by MIDI-derived transcriptions
+    velocity: Optional[int] = None  # MIDI velocity 0-127
+    start_time_s: Optional[float] = None  # absolute start time in seconds
+    end_time_s: Optional[float] = None  # absolute end time in seconds
 
 
 @dataclass
@@ -57,5 +61,5 @@ class ScoreModel:
     key: str = "C"  # e.g. "C", "G", "D", "F", "Bb"
     time_sig: str = "4/4"
     parts: list[ScorePart] = field(default_factory=list)
-    # "placeholder" | "transcription" | "user_edit"
+    # "placeholder" | "chord_chart" | "chord_chart_fallback" | "basic_pitch" | "user_edit"
     source: str = "placeholder"

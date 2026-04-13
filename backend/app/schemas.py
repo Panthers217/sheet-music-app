@@ -51,6 +51,7 @@ class ChartNoteResponse(BaseModel):
     pitch: str
     duration: str
     is_rest: bool
+    velocity: int | None = None
 
     class Config:
         from_attributes = True
@@ -115,3 +116,35 @@ class ChartMetadataUpdate(BaseModel):
     tempo: int | None = None
     key_sig: str | None = None
     time_sig: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# MIDI transcription schemas
+# ---------------------------------------------------------------------------
+
+
+class MidiTranscribeResponse(BaseModel):
+    """Returned by POST /api/songs/{id}/midi after a successful transcription."""
+
+    chart_id: int
+    song_id: int
+    stem_used: str
+    note_count: int
+    measure_count: int
+    tempo_bpm: float
+    midi_url: str  # e.g. /api/charts/{chart_id}/midi
+
+
+class NoteDetail(BaseModel):
+    """A single note as returned by GET /api/charts/{id}/notes."""
+
+    id: int
+    measure_number: int
+    position: int
+    pitch: str
+    duration: str
+    is_rest: bool
+    velocity: int | None
+
+    class Config:
+        from_attributes = True

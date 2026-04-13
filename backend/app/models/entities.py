@@ -139,13 +139,15 @@ class ChartNote(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     measure_id: Mapped[int] = mapped_column(ForeignKey("chart_measures.id"), index=True)
-    # position within the measure (0-based, ascending)
+    # position within the measure (16th-note grid offset, 0 = beat 1)
     position: Mapped[int] = mapped_column(Integer, default=0)
     # "C4", "D#3", etc. for pitched notes; ignored when is_rest=True
     pitch: Mapped[str] = mapped_column(String(10), default="C4")
     # "whole" | "half" | "quarter" | "eighth" | "16th"
     duration: Mapped[str] = mapped_column(String(20), default="quarter")
     is_rest: Mapped[bool] = mapped_column(Boolean, default=False)
+    # MIDI velocity (0-127); None for chord-only charts
+    velocity: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
     measure: Mapped["ChartMeasure"] = relationship(back_populates="notes")
 

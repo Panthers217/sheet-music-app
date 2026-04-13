@@ -50,3 +50,13 @@ def musicxml_dir(project_id: int) -> Path:
 
 def musicxml_file_path(project_id: int, chart_id: int) -> Path:
     return musicxml_dir(project_id) / f"chart_{chart_id}.xml"
+
+
+def midi_dir(project_id: int) -> Path:
+    path = project_dir(project_id) / "generated" / "midi"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def midi_file_path(project_id: int, chart_id: int) -> Path:
+    return midi_dir(project_id) / f"chart_{chart_id}.mid"

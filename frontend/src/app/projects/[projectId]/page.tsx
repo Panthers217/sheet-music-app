@@ -6,15 +6,30 @@ import { useParams, useRouter } from "next/navigation";
 
 import { API_BASE_URL, apiFetch } from "@/components/api";
 import ChartEditor, { type Chart as StructuredChart } from "@/components/score/ChartEditor";
+import type { OsmdHandle } from "@/components/score/usePlayback";
 
-// OSMD touches the DOM — load client-side only
+// OSMD and PlaybackControls touch browser APIs — load client-side only
 const ScoreViewer = dynamic(() => import("@/components/score/ScoreViewer"), { ssr: false });
+const PlaybackControls = dynamic(
+  () => import("@/components/score/PlaybackControls"),
+  { ssr: false },
+);
 
 type LegacyChart = {
   id: number;
   chart_data: string;
   version: number;
   chart_type: string;
+};
+
+type MidiTranscribeResponse = {
+  chart_id: number;
+  song_id: number;
+  stem_used: string;
+  note_count: number;
+  measure_count: number;
+  tempo_bpm: number;
+  midi_url: string;
 };
 
 type Stem = {
@@ -63,6 +78,16 @@ export default function ProjectDetailPage() {
   const [chartMessage, setChartMessage] = useState<string | null>(null);
   // Per-song harmonic stem selection (songId -> stem value)
   const [harmonicStemBySong, setHarmonicStemBySong] = useState<Record<number, string>>({});
+  // MIDI / Basic Pitch state
+  const [midiStemBySong, setMidiStemBySong] = useState<Record<number, string>>({});
+  const [midiChartInfo, setMidiChartInfo] = useState<MidiTranscribeResponse | null>(null);
+  const [midiChart, setMidiChart] = useState<StructuredChart | null>(null);
+  const [midiMusicXml, setMidiMusicXml] = useState<string | null>(null);
+  const [midiOsmd, setMidiOsmd] = useState<OsmdHandle | null>(null);
+  const [generatingMidi, setGeneratingMidi] = useState(false);
+  const [midiMessage, setMidiMessage] = useState<string | null>(null);
+  // OSMD handle for chord chart (PlaybackControls cursor sync)
+  const [osmd, setOsmd] = useState<OsmdHandle | null>(null);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -146,6 +171,32 @@ export default function ProjectDetailPage() {
     if (!confirm("Delete this project and all its songs? This cannot be undone.")) return;
     await apiFetch(`/api/projects/${numericProjectId}`, { method: "DELETE" });
     router.push("/");
+  }
+
+  async function onGenerateNotes(songId: number) {
+    setGeneratingMidi(true);
+    setMidiMessage(null);
+    setMidiChart(null);
+    setMidiMusicXml(null);
+    const stem = midiStemBySong[songId] ?? "bass";
+    try {
+      // 1. Run Basic Pitch transcription
+      const result = await apiFetch<MidiTranscribeResponse>(
+        `/api/songs/${songId}/midi?stem=${encodeURIComponent(stem)}`,
+        { method: "POST" },
+      );
+      setMidiChartInfo(result);
+      // 2. Fetch full chart (with notes) for playback
+      const fullChart = await apiFetch<StructuredChart>(`/api/charts/${result.chart_id}`);
+      setMidiChart(fullChart);
+      // 3. Fetch MusicXML for OSMD rendering
+      const xmlResp = await fetch(`${API_BASE_URL}/api/charts/${result.chart_id}/musicxml`);
+      if (xmlResp.ok) setMidiMusicXml(await xmlResp.text());
+    } catch (err) {
+      setMidiMessage(err instanceof Error ? err.message : "MIDI generation failed");
+    } finally {
+      setGeneratingMidi(false);
+    }
   }
 
   async function onGenerateChart(songId: number) {
@@ -265,35 +316,62 @@ export default function ProjectDetailPage() {
               ) : (
                 <p style={{ margin: "0.25rem 0", color: "#888" }}>Stems pending…</p>
               )}
-              <button
-                type="button"
-                disabled={generatingChart}
-                onClick={() => onGenerateChart(song.id)}
-                style={{ marginTop: "0.5rem" }}
-              >
-                {generatingChart ? "Generating…" : "Generate chart"}
-              </button>
-              <label style={{ marginLeft: "0.75rem", fontSize: "0.85rem" }}>
-                Harmonic source:{" "}
-                <select
-                  value={harmonicStemBySong[song.id] ?? "preferred"}
-                  onChange={(e) =>
-                    setHarmonicStemBySong((prev) => ({ ...prev, [song.id]: e.target.value }))
-                  }
+              {/* Chord chart row */}
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.5rem", flexWrap: "wrap" }}>
+                <button
+                  type="button"
                   disabled={generatingChart}
-                  style={{ marginLeft: "0.25rem" }}
+                  onClick={() => onGenerateChart(song.id)}
                 >
-                  <option value="preferred">auto (preferred stem)</option>
-                  <option value="mix">full mix</option>
-                  {song.stems
-                    .filter((s) => s.status === "completed")
-                    .map((s) => (
-                      <option key={s.id} value={s.stem_type}>
-                        {s.stem_type} stem
-                      </option>
+                  {generatingChart ? "Generating…" : "Generate chart"}
+                </button>
+                <label style={{ fontSize: "0.85rem" }}>
+                  Harmonic source:{" "}
+                  <select
+                    value={harmonicStemBySong[song.id] ?? "preferred"}
+                    onChange={(e) =>
+                      setHarmonicStemBySong((prev) => ({ ...prev, [song.id]: e.target.value }))
+                    }
+                    disabled={generatingChart}
+                    style={{ marginLeft: "0.25rem" }}
+                  >
+                    <option value="preferred">auto (preferred stem)</option>
+                    <option value="mix">full mix</option>
+                    {song.stems
+                      .filter((s) => s.status === "completed")
+                      .map((s) => (
+                        <option key={s.id} value={s.stem_type}>
+                          {s.stem_type} stem
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              </div>
+              {/* MIDI / Basic Pitch row */}
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.4rem", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  disabled={generatingMidi}
+                  onClick={() => onGenerateNotes(song.id)}
+                >
+                  {generatingMidi ? "Transcribing…" : "Generate Notes (MIDI)"}
+                </button>
+                <label style={{ fontSize: "0.85rem" }}>
+                  Stem:{" "}
+                  <select
+                    value={midiStemBySong[song.id] ?? "bass"}
+                    onChange={(e) =>
+                      setMidiStemBySong((prev) => ({ ...prev, [song.id]: e.target.value }))
+                    }
+                    disabled={generatingMidi}
+                    style={{ marginLeft: "0.25rem" }}
+                  >
+                    {["bass", "vocals", "other", "drums"].map((s) => (
+                      <option key={s} value={s}>{s}</option>
                     ))}
-                </select>
-              </label>
+                  </select>
+                </label>
+              </div>
             </li>
           ))}
         </ul>
@@ -310,7 +388,33 @@ export default function ProjectDetailPage() {
           {chartMessage && <p style={{ color: "red" }}>{chartMessage}</p>}
           <ChartEditor chart={structuredChart} onSaved={onChartSaved} />
           <h3 style={{ marginTop: "1.5rem" }}>Score preview</h3>
-          <ScoreViewer musicXml={musicXml} height="500px" />
+          <ScoreViewer musicXml={musicXml} height="500px" onOsmdReady={setOsmd} />
+          <PlaybackControls chart={structuredChart} osmd={osmd} />
+        </section>
+      )}
+
+      {/* ---- MIDI Notes chart + playback ---- */}
+      {(midiChart || midiChartInfo || midiMessage) && (
+        <section className="card">
+          <h2>MIDI Notes{midiChart ? ` — ${midiChart.title}` : ""}</h2>
+          {midiMessage && <p style={{ color: "red" }}>{midiMessage}</p>}
+          {midiChartInfo && !midiMessage && (
+            <p style={{ color: "#888", fontSize: "0.85rem" }}>
+              Stem: {midiChartInfo.stem_used} · {midiChartInfo.note_count} notes ·{" "}
+              {midiChartInfo.measure_count} measures · {Math.round(midiChartInfo.tempo_bpm)} BPM
+              {" · "}
+              <a href={`${API_BASE_URL}${midiChartInfo.midi_url}`} download>
+                Download MIDI
+              </a>
+            </p>
+          )}
+          {midiChart && (
+            <>
+              <PlaybackControls chart={midiChart} osmd={midiOsmd} />
+              <h3 style={{ marginTop: "1rem" }}>Score preview</h3>
+              <ScoreViewer musicXml={midiMusicXml} height="500px" onOsmdReady={setMidiOsmd} />
+            </>
+          )}
         </section>
       )}
 

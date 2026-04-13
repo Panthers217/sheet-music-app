@@ -89,6 +89,7 @@ class ChartBuilder:
                             pitch=sn.pitch,
                             duration=sn.duration,
                             is_rest=sn.is_rest,
+                            velocity=sn.velocity,
                         )
                     )
 

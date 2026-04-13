@@ -1,12 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { OsmdHandle } from "./usePlayback";
 
 type Props = {
   /** Full MusicXML string to render, or null to show nothing */
   musicXml: string | null;
   /** Optional height for the score container */
   height?: string;
+  /**
+   * Called after OSMD renders successfully with the OSMD instance.
+   * Pass the instance to usePlayback / PlaybackControls for cursor sync.
+   * Called with null when musicXml becomes null or the component unmounts.
+   */
+  onOsmdReady?: (osmd: OsmdHandle | null) => void;
 };
 
 /**
@@ -15,13 +22,19 @@ type Props = {
  * OSMD touches the DOM, so this component is client-only.
  * It dynamically imports OSMD on mount to avoid SSR issues.
  */
-export default function ScoreViewer({ musicXml, height = "400px" }: Props) {
+export default function ScoreViewer({ musicXml, height = "400px", onOsmdReady }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Keep a stable ref to the callback to avoid re-triggering the effect
+  const onReadyRef = useRef(onOsmdReady);
+  useEffect(() => { onReadyRef.current = onOsmdReady; }, [onOsmdReady]);
 
   useEffect(() => {
-    if (!musicXml || !containerRef.current) return;
+    if (!musicXml || !containerRef.current) {
+      onReadyRef.current?.(null);
+      return;
+    }
 
     let cancelled = false;
     setLoading(true);
@@ -45,6 +58,18 @@ export default function ScoreViewer({ musicXml, height = "400px" }: Props) {
         .then(() => {
           if (cancelled) return;
           osmd.render();
+
+          // Enable cursor for playhead sync
+          try {
+            osmd.cursor.show();
+            osmd.cursor.reset();
+          } catch {
+            // cursor may not be available on all OSMD builds
+          }
+
+          // Notify parent with the OSMD handle
+          onReadyRef.current?.(osmd as unknown as OsmdHandle);
+
           setLoading(false);
         })
         .catch((err: unknown) => {
@@ -56,6 +81,7 @@ export default function ScoreViewer({ musicXml, height = "400px" }: Props) {
 
     return () => {
       cancelled = true;
+      onReadyRef.current?.(null);
     };
   }, [musicXml]);
 

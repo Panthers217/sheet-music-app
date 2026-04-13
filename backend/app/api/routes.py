@@ -2,7 +2,8 @@ import os
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal, get_db
@@ -13,6 +14,8 @@ from app.schemas import (
     ChartMeasureUpdate,
     ChartMetadataUpdate,
     ChartResponse,
+    MidiTranscribeResponse,
+    NoteDetail,
     ProjectCreate,
     ProjectResponse,
     ProjectUpdate,
@@ -391,4 +394,185 @@ def list_stems(song_id: int, db: Session = Depends(get_db)) -> list[dict]:
         }
         for s in sorted(song.stems, key=lambda x: x.id)
     ]
+
+
+# ---------------------------------------------------------------------------
+# Basic Pitch / MIDI endpoints
+# ---------------------------------------------------------------------------
+
+_MIDI_STEM_CHOICES = {"bass", "vocals", "other", "drums"}
+
+
+@router.post("/songs/{song_id}/midi", response_model=MidiTranscribeResponse)
+def transcribe_midi(
+    song_id: int,
+    stem: str = Query(default="bass", description="Demucs stem to transcribe: bass | vocals | other | drums"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Run Spotify Basic Pitch on a Demucs stem and persist the resulting note
+    chart to the database.
+
+    - Uses the stem WAV file produced by the Demucs processing pipeline.
+    - Beat tracking / tempo is derived from the original mix via TimingAnalyzer
+      for reliable measure alignment.
+    - Saves a MIDI file under ``uploads/{project_id}/generated/midi/``.
+    - Creates a Chart + ChartMeasure + ChartNote rows in the database.
+    - Creates an Export record pointing at the MIDI file.
+
+    Returns a summary including the chart_id and a URL to download the MIDI.
+    """
+    if stem not in _MIDI_STEM_CHOICES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"stem must be one of {sorted(_MIDI_STEM_CHOICES)}",
+        )
+
+    song = db.query(Song).filter(Song.id == song_id).first()
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+
+    audio_path = Path(song.file_path)
+    if not audio_path.exists():
+        raise HTTPException(status_code=400, detail="Audio file not found on disk")
+
+    # Resolve the requested Demucs stem WAV
+    from app.services.audio.stems import completed_stems
+
+    stems_map = completed_stems(audio_path)
+    if stem not in stems_map:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Stem '{stem}' is not available for this song. "
+                f"Available: {sorted(stems_map.keys()) or 'none (run stem separation first)'}"
+            ),
+        )
+    stem_path = stems_map[stem]
+
+    # Get authoritative tempo from the original mix
+    from app.services.audio.timing import TimingAnalyzer
+
+    timing = TimingAnalyzer().analyze(audio_path)
+
+    project_id = song.project_id
+
+    # Build a placeholder chart first to get an ID for the MIDI filename
+    from app.services.transcription.basic_pitch_engine import BasicPitchEngine
+
+    engine = BasicPitchEngine(project_id=project_id)
+
+    # Create a stub chart so we have a chart_id before writing the MIDI file
+    # (the chart will be populated by create_from_score below)
+    stub_chart = Chart(
+        song_id=song_id,
+        title=f"{song.title} – Notes ({stem})",
+        tempo=timing.tempo_bpm,
+        key_sig="C",
+        time_sig=timing.time_sig,
+        status="pending",
+    )
+    db.add(stub_chart)
+    db.flush()  # assigns stub_chart.id
+
+    # Run Basic Pitch inference + write MIDI
+    result = engine.analyze(
+        audio_path=stem_path,
+        title=stub_chart.title,
+        tempo_bpm=float(timing.tempo_bpm),
+        time_sig=timing.time_sig,
+        chart_id=stub_chart.id,
+    )
+
+    # Populate chart from the ScoreModel (reuse builder logic for measures/notes)
+    builder = ChartBuilder(db)
+
+    # Delete the stub and create a fully-formed chart via the builder
+    # (simpler than updating the stub in-place given builder.create_from_score uses flush)
+    db.delete(stub_chart)
+    db.flush()
+
+    chart = builder.create_from_score(
+        song_id=song_id,
+        score=result.score,
+    )
+    # Update title/tempo in case they differ
+    chart.title = result.score.title
+    chart.tempo = result.score.tempo
+
+    db.flush()
+
+    # Save the MIDI to the correct path now that we have the real chart.id
+    midi_path = storage.midi_file_path(project_id, chart.id)
+    result.midi_path.rename(midi_path)
+
+    # Record export
+    db.add(Export(chart_id=chart.id, format="midi", file_path=str(midi_path)))
+    db.commit()
+    db.refresh(chart)
+
+    measure_count = len(chart.measures) if chart.measures else 0
+
+    return {
+        "chart_id": chart.id,
+        "song_id": song_id,
+        "stem_used": stem,
+        "note_count": result.note_count,
+        "measure_count": measure_count,
+        "tempo_bpm": result.tempo_bpm,
+        "midi_url": f"/api/charts/{chart.id}/midi",
+    }
+
+
+@router.get("/charts/{chart_id}/midi")
+def get_chart_midi(chart_id: int, db: Session = Depends(get_db)) -> FileResponse:
+    """Download the MIDI file for a chart generated by Basic Pitch."""
+    export = (
+        db.query(Export)
+        .filter(Export.chart_id == chart_id, Export.format == "midi")
+        .first()
+    )
+    if not export:
+        raise HTTPException(status_code=404, detail="No MIDI export found for this chart")
+
+    midi_path = Path(export.file_path)
+    if not midi_path.exists():
+        raise HTTPException(status_code=404, detail="MIDI file not found on disk")
+
+    return FileResponse(
+        path=str(midi_path),
+        media_type="audio/midi",
+        filename=midi_path.name,
+    )
+
+
+@router.get("/charts/{chart_id}/notes", response_model=list[NoteDetail])
+def get_chart_notes(chart_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    """
+    Return all notes in a chart as a flat list ordered by measure then position.
+
+    Useful for building playback timelines or inspecting note-level data.
+    Each note includes its parent measure_number for easy grouping.
+    """
+    chart = db.query(Chart).filter(Chart.id == chart_id).first()
+    if not chart:
+        raise HTTPException(status_code=404, detail="Chart not found")
+
+    notes = []
+    for measure in chart.measures:
+        for note in measure.notes:
+            notes.append(
+                {
+                    "id": note.id,
+                    "measure_number": measure.measure_number,
+                    "position": note.position,
+                    "pitch": note.pitch,
+                    "duration": note.duration,
+                    "is_rest": note.is_rest,
+                    "velocity": note.velocity,
+                }
+            )
+
+    notes.sort(key=lambda n: (n["measure_number"], n["position"]))
+    return notes
 

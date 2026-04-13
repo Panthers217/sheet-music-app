@@ -21,6 +21,7 @@ Base = declarative_base()
 _MIGRATIONS = [
     "ALTER TABLE chart_measures ADD COLUMN chord_confidence REAL",
     "ALTER TABLE chart_measures ADD COLUMN chord_alternatives TEXT",
+    "ALTER TABLE chart_notes ADD COLUMN velocity INTEGER",
 ]
 
 

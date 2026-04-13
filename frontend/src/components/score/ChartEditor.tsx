@@ -4,11 +4,24 @@ import { FormEvent, useState } from "react";
 
 import { apiFetch } from "@/components/api";
 
+export type ChartNote = {
+  id: number;
+  measure_id: number;
+  position: number;
+  pitch: string;
+  duration: string;
+  is_rest: boolean;
+  velocity: number | null;
+};
+
 export type ChartMeasure = {
   id: number;
   measure_number: number;
   chord_symbol: string | null;
   time_sig_override: string | null;
+  chord_confidence: number | null;
+  chord_alternatives: [string, number][] | null;
+  notes: ChartNote[];
 };
 
 export type Chart = {
@@ -25,6 +38,31 @@ type Props = {
   chart: Chart;
   onSaved: (updated: Chart) => void;
 };
+
+// Thresholds for confidence colour coding
+const CONF_HIGH = 0.45;
+const CONF_MED  = 0.35;
+
+function confidenceColor(conf: number | null): string {
+  if (conf === null) return "transparent";
+  if (conf >= CONF_HIGH) return "#22c55e"; // green
+  if (conf >= CONF_MED)  return "#f59e0b"; // amber
+  return "#ef4444";                         // red
+}
+
+function confidenceTip(measure: ChartMeasure): string {
+  if (measure.chord_confidence === null) return "";
+  const lines = [`Confidence: ${(measure.chord_confidence * 100).toFixed(1)}%`];
+  if (measure.chord_alternatives && measure.chord_alternatives.length > 0) {
+    lines.push(
+      "Alternatives: " +
+        measure.chord_alternatives
+          .map(([c, s]) => `${c} (${(s * 100).toFixed(0)}%)`)
+          .join(", ")
+    );
+  }
+  return lines.join("\n");
+}
 
 /**
  * Simple form-based editor for a structured Chart entity.
@@ -136,34 +174,60 @@ export default function ChartEditor({ chart, onSaved }: Props) {
 
       {chart.measures.length > 0 && (
         <div style={{ marginTop: "1rem" }}>
-          <h4 style={{ marginBottom: "0.5rem" }}>Chord symbols by measure</h4>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "0.5rem" }}>
-            {chart.measures.map((measure) => (
-              <div
-                key={measure.id}
-                style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.85rem" }}
-              >
-                <label>m.{measure.measure_number}</label>
-                <div style={{ display: "flex", gap: "0.25rem" }}>
-                  <input
-                    value={chords[measure.id] ?? ""}
-                    onChange={(e) =>
-                      setChords((prev) => ({ ...prev, [measure.id]: e.target.value }))
-                    }
-                    placeholder="e.g. Am7"
-                    style={{ width: "100%", minWidth: 0 }}
-                  />
-                  <button
-                    type="button"
-                    disabled={saving}
-                    onClick={() => saveMeasure(measure.id)}
-                    style={{ whiteSpace: "nowrap" }}
-                  >
-                    ✓
-                  </button>
+          <h4 style={{ marginBottom: "0.25rem" }}>Chord symbols by measure</h4>
+          <p style={{ fontSize: "0.8rem", color: "#888", marginBottom: "0.5rem" }}>
+            Confidence:{" "}
+            <span style={{ color: "#22c55e" }}>■</span> high (&ge;45%){"  "}
+            <span style={{ color: "#f59e0b" }}>■</span> medium (&ge;35%){"  "}
+            <span style={{ color: "#ef4444" }}>■</span> low (&lt;35%)
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: "0.5rem" }}>
+            {chart.measures.map((measure) => {
+              const conf = measure.chord_confidence;
+              const color = confidenceColor(conf);
+              const tip = confidenceTip(measure);
+              return (
+                <div
+                  key={measure.id}
+                  title={tip || undefined}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.25rem",
+                    fontSize: "0.85rem",
+                    borderLeft: `3px solid ${color}`,
+                    paddingLeft: "0.4rem",
+                  }}
+                >
+                  <label style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>m.{measure.measure_number}</span>
+                    {conf !== null && (
+                      <span style={{ color, fontVariantNumeric: "tabular-nums" }}>
+                        {(conf * 100).toFixed(0)}%
+                      </span>
+                    )}
+                  </label>
+                  <div style={{ display: "flex", gap: "0.25rem" }}>
+                    <input
+                      value={chords[measure.id] ?? ""}
+                      onChange={(e) =>
+                        setChords((prev) => ({ ...prev, [measure.id]: e.target.value }))
+                      }
+                      placeholder="e.g. Am7"
+                      style={{ width: "100%", minWidth: 0 }}
+                    />
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => saveMeasure(measure.id)}
+                      style={{ whiteSpace: "nowrap" }}
+                    >
+                      ✓
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

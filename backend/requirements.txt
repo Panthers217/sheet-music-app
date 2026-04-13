@@ -10,3 +10,9 @@ soundfile
 librosa
 pytest==8.3.4
 httpx==0.28.1
+# Basic Pitch (ONNX backend — avoids TensorFlow Python 3.12 incompatibility)
+basic-pitch==0.4.0
+onnxruntime
+pretty_midi
+mir_eval
+resampy
