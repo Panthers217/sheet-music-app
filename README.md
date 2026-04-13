@@ -11,7 +11,7 @@ Audio upload
 Demucs stem separation   (background task, CPU)
      │
      ▼
-Transcription engine     (placeholder → swappable for real engine)
+Transcription engine     (ChordChartEngine: beat tracking + chromagram chord detection)
      │
      ▼
 Internal ScoreModel      (Python dataclasses — source of truth)
@@ -40,7 +40,7 @@ MusicXML is always regenerated from that model on demand.
 - ✅ Audio upload (MP3 / WAV)
 - ✅ Demucs stem separation (background task, CPU, `htdemucs` model → drums / bass / vocals / other)
 - ✅ Structured chart DB model (`Chart`, `ChartMeasure`, `ChartNote`, `Export`)
-- ✅ Placeholder transcription engine (8-measure scaffold with chord symbols; swappable)
+- ✅ Chord-chart transcription engine (librosa beat tracking + chroma-based chord detection)
 - ✅ MusicXML 3.1 generator (time sig, key sig, clef, tempo, chord symbols, notes/rests)
 - ✅ OSMD score preview in project page
 - ✅ Form-based chart editor (title, tempo, key, time sig, chord symbols per measure)
@@ -53,6 +53,29 @@ Stems are written to `uploads/{project_id}/stems/htdemucs/{song_stem}/`.
 The processing job status is tracked in the DB (`queued → running → completed/failed`).
 
 **Dependencies:** `torch==2.5.1+cpu`, `torchaudio==2.5.1+cpu`, `soundfile` (CPU-only, no CUDA needed).
+
+## How chart analysis works
+
+`POST /api/songs/{id}/charts` runs `ChordChartEngine` on the uploaded audio:
+
+1. **Beat tracking** — `librosa.beat.beat_track` detects tempo (BPM) and beat timestamps.
+2. **Measure segmentation** — beats are grouped into 4/4 measures.
+3. **Chromagram** — `librosa.feature.chroma_cqt` computes a 12-bin pitch-class energy matrix.
+4. **Chord detection** — each measure's average chroma is compared against cosine-similarity
+   templates for all 24 major/minor triads; best-scoring template wins.
+5. **ScoreModel → DB** — `ChartBuilder` persists the result as `Chart` / `ChartMeasure` / `ChartNote` rows.
+
+The `source` field on the stored chart will be `"chord_chart"`.  If analysis fails the engine
+falls back gracefully and marks the chart `"placeholder"`.
+
+**Current limitations:**
+- Notes are whole-rests (pitch transcription not yet implemented).
+- Key signature is hardcoded to C (Krumhansl–Schmuckler detection is a planned TODO).
+- Time signature is fixed to 4/4.
+- Analysis runs on the original mix; using the `other`/`vocals` Demucs stem would improve
+  harmonic accuracy (planned TODO).
+
+**Dependency:** `librosa==0.11.0` (added to `requirements.txt`); ffmpeg is required for MP3 loading.
 
 ## How MusicXML works
 
@@ -84,9 +107,11 @@ and passes the new string — OSMD re-renders automatically.
 │   │       ├── processing.py      ← Demucs background pipeline
 │   │       ├── score/model.py     ← internal ScoreModel dataclasses
 │   │       ├── storage/paths.py   ← file path config
+│   │       ├── audio/timing.py    ← TimingAnalyzer (librosa beat tracking)
 │   │       └── transcription/
-│   │           ├── base.py        ← TranscriptionEngine ABC
-│   │           └── placeholder.py ← default 8-measure scaffold
+│   │           ├── base.py         ← TranscriptionEngine ABC
+│   │           ├── chord_chart.py  ← ChordChartEngine (real analysis, default)
+│   │           └── placeholder.py  ← fallback 8-measure scaffold
 │   ├── data/app.db                ← SQLite database
 │   ├── requirements.txt
 │   └── uploads/                   ← audio + stems + generated exports
@@ -166,7 +191,7 @@ Open `http://localhost:3000`.
 2. Create a project.
 3. Upload an MP3 or WAV file.
 4. Watch stem status on the project page (refresh after ~60–90s for CPU).
-5. Click **Generate chart** — this runs the placeholder transcription and produces MusicXML.
+5. Click **Generate chart** — this runs beat tracking + chord detection and produces MusicXML.
 6. The score renders in the browser via OSMD.
 7. Edit the title, tempo, key, time sig, or chord symbols and save — OSMD re-renders.
 

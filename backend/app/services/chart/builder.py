@@ -13,13 +13,15 @@ from sqlalchemy.orm import Session
 from app.models import Chart, ChartMeasure, ChartNote
 from app.services.score.model import ScoreModel
 from app.services.transcription.base import TranscriptionEngine
-from app.services.transcription.placeholder import PlaceholderTranscriptionEngine
+from app.services.transcription.chord_chart import ChordChartEngine
 
 
 class ChartBuilder:
     def __init__(self, db: Session, engine: TranscriptionEngine | None = None) -> None:
         self._db = db
-        self._engine: TranscriptionEngine = engine or PlaceholderTranscriptionEngine()
+        # Default to ChordChartEngine (real tempo + chroma chord detection).
+        # Pass an explicit engine to override (e.g. PlaceholderTranscriptionEngine for tests).
+        self._engine: TranscriptionEngine = engine or ChordChartEngine()
 
     def build_score_from_song(self, audio_path: Path, title: str) -> ScoreModel:
         """Run the transcription engine on an audio file and return a ScoreModel."""

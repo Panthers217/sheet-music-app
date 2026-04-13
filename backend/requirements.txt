@@ -7,5 +7,6 @@ demucs==4.0.1
 torch==2.5.1+cpu
 torchaudio==2.5.1+cpu
 soundfile
+librosa
 pytest==8.3.4
 httpx==0.28.1
