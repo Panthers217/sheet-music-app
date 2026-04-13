@@ -61,6 +61,8 @@ export default function ProjectDetailPage() {
   const [musicXml, setMusicXml] = useState<string | null>(null);
   const [generatingChart, setGeneratingChart] = useState(false);
   const [chartMessage, setChartMessage] = useState<string | null>(null);
+  // Per-song harmonic stem selection (songId -> stem value)
+  const [harmonicStemBySong, setHarmonicStemBySong] = useState<Record<number, string>>({});
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -149,10 +151,12 @@ export default function ProjectDetailPage() {
   async function onGenerateChart(songId: number) {
     setGeneratingChart(true);
     setChartMessage(null);
+    const stem = harmonicStemBySong[songId] ?? "preferred";
     try {
-      const chart = await apiFetch<StructuredChart>(`/api/songs/${songId}/charts`, {
-        method: "POST",
-      });
+      const chart = await apiFetch<StructuredChart>(
+        `/api/songs/${songId}/charts?harmonic_stem=${encodeURIComponent(stem)}`,
+        { method: "POST" },
+      );
       setStructuredChart(chart);
       await fetchMusicXml(chart.id);
     } catch (err) {
@@ -269,6 +273,27 @@ export default function ProjectDetailPage() {
               >
                 {generatingChart ? "Generating…" : "Generate chart"}
               </button>
+              <label style={{ marginLeft: "0.75rem", fontSize: "0.85rem" }}>
+                Harmonic source:{" "}
+                <select
+                  value={harmonicStemBySong[song.id] ?? "preferred"}
+                  onChange={(e) =>
+                    setHarmonicStemBySong((prev) => ({ ...prev, [song.id]: e.target.value }))
+                  }
+                  disabled={generatingChart}
+                  style={{ marginLeft: "0.25rem" }}
+                >
+                  <option value="preferred">auto (preferred stem)</option>
+                  <option value="mix">full mix</option>
+                  {song.stems
+                    .filter((s) => s.status === "completed")
+                    .map((s) => (
+                      <option key={s.id} value={s.stem_type}>
+                        {s.stem_type} stem
+                      </option>
+                    ))}
+                </select>
+              </label>
             </li>
           ))}
         </ul>

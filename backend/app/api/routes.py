@@ -21,6 +21,7 @@ from app.services.chart.builder import ChartBuilder
 from app.services.musicxml.generator import MusicXMLGenerator
 from app.services.processing import PlaceholderProcessingPipeline
 from app.services.storage import paths as storage
+from app.services.transcription.chord_chart import CHROMA_METHODS, ChordChartEngine, ChromaConfig
 
 router = APIRouter(prefix="/api")
 pipeline = PlaceholderProcessingPipeline()
@@ -217,10 +218,24 @@ def update_chart(chart_id: int, payload: ChartEditUpdate, db: Session = Depends(
 
 
 @router.post("/songs/{song_id}/charts", response_model=ChartResponse)
-def create_chart(song_id: int, db: Session = Depends(get_db)) -> Chart:
+def create_chart(
+    song_id: int,
+    harmonic_stem: str = "preferred",
+    chroma_method: str = "cqt",
+    db: Session = Depends(get_db),
+) -> Chart:
     """
-    Generate a new structured chart for a song using the placeholder
-    transcription engine.  Returns the saved Chart entity.
+    Generate a new structured chart for a song using ChordChartEngine.
+
+    Query parameters:
+    - **harmonic_stem**: audio source for chroma extraction.
+      `"preferred"` (default) tries the *other* Demucs stem, then *vocals*,
+      then falls back to the full mix.  Pass `"mix"` to always use the mix,
+      or a specific stem name (`"other"`, `"vocals"`, `"bass"`, `"drums"`).
+    - **chroma_method**: `"cqt"` (default) | `"stft"` | `"cens"`.
+
+    Beat tracking always runs on the original mix for reliability.
+    Returns the saved Chart entity with per-measure confidence scores.
     """
     song = db.query(Song).filter(Song.id == song_id).first()
     if not song:
@@ -230,9 +245,22 @@ def create_chart(song_id: int, db: Session = Depends(get_db)) -> Chart:
     if not audio_path.exists():
         raise HTTPException(status_code=400, detail="Audio file not found on disk")
 
+    if chroma_method not in CHROMA_METHODS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"chroma_method must be one of {list(CHROMA_METHODS)}",
+        )
+
+    config = ChromaConfig(method=chroma_method, harmonic_stem=harmonic_stem)
+    engine = ChordChartEngine(config)
+    result = engine.analyze(audio_path, title=song.title)
+
     builder = ChartBuilder(db)
-    score = builder.build_score_from_song(audio_path=audio_path, title=song.title)
-    chart = builder.create_from_score(song_id=song.id, score=score)
+    chart = builder.create_from_score(
+        song_id=song.id,
+        score=result.score,
+        analyses=result.measure_analyses,
+    )
 
     db.commit()
     db.refresh(chart)

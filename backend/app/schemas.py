@@ -1,6 +1,7 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+import json
+from pydantic import BaseModel, field_validator
 
 
 class ProjectCreate(BaseModel):
@@ -69,6 +70,20 @@ class ChartMeasureResponse(BaseModel):
     chord_symbol: str | None
     time_sig_override: str | None
     notes: list[ChartNoteResponse] = []
+    # Chord analysis metadata
+    chord_confidence: float | None = None
+    # Stored as JSON string in DB; parsed to list of [chord, score] pairs here
+    chord_alternatives: list[list] | None = None
+
+    @field_validator("chord_alternatives", mode="before")
+    @classmethod
+    def parse_alternatives(cls, v: object) -> list[list] | None:
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except Exception:
+                return None
+        return v  # type: ignore[return-value]
 
     class Config:
         from_attributes = True

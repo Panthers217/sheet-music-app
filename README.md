@@ -58,24 +58,57 @@ The processing job status is tracked in the DB (`queued → running → complete
 
 `POST /api/songs/{id}/charts` runs `ChordChartEngine` on the uploaded audio:
 
-1. **Beat tracking** — `librosa.beat.beat_track` detects tempo (BPM) and beat timestamps.
-2. **Measure segmentation** — beats are grouped into 4/4 measures.
-3. **Chromagram** — `librosa.feature.chroma_cqt` computes a 12-bin pitch-class energy matrix.
-4. **Chord detection** — each measure's average chroma is compared against cosine-similarity
-   templates for all 24 major/minor triads; best-scoring template wins.
-5. **ScoreModel → DB** — `ChartBuilder` persists the result as `Chart` / `ChartMeasure` / `ChartNote` rows.
+1. **Harmonic source selection** — the engine prefers a Demucs stem for chroma extraction.
+   Priority: `other` stem → `vocals` stem → full mix.  Beat tracking always uses the
+   original mix regardless (more reliable percussive transients).
+2. **Beat tracking** — `librosa.beat.beat_track` on the mix detects tempo (BPM) and beat timestamps.
+3. **Measure segmentation** — beats are grouped into 4-beat measures (4/4).
+4. **Chromagram** — configurable via `ChromaConfig.method`: `cqt` (default) | `stft` | `cens`.
+   Computed on the selected harmonic source for cleaner pitch-class content.
+5. **Chord detection** — per-measure average chroma (L1-normalised) is dot-product scored
+   against all 24 major/minor triad templates.  The best match wins; top 3 alternatives
+   and confidence scores are recorded.
+6. **ScoreModel → DB** — `ChartBuilder` persists the result as `Chart` / `ChartMeasure` /
+   `ChartNote` rows.  Each `ChartMeasure` stores `chord_confidence` (float) and
+   `chord_alternatives` (JSON list) for frontend display.
 
-The `source` field on the stored chart will be `"chord_chart"`.  If analysis fails the engine
-falls back gracefully and marks the chart `"placeholder"`.
+The `source` field on the stored chart is `"chord_chart"`.
+If analysis fails completely the engine falls back and marks the chart `"placeholder"`.
+
+### Chroma strategy comparison (test track "live in a way app test.mp3")
+
+| Method | Chords (first 6 of 24 measures) | Typical confidence |
+|--------|----------------------------------|-------------------|
+| `cqt`  | Bb F Gm Gm Bb Bb                | 0.35 – 0.62       |
+| `stft` | Bb F F Gm Bbm Bb                | 0.31 – 0.38       |
+| `cens` | Bb Bb Bb Bb Bb Bb               | 0.47 – 0.63       |
+
+`cqt` gives the most varied results on this track; `cens` (smoothed energy) tends to lock on
+the tonic and produces less variety.  `cqt` is the current default.
+
+### Configuration
+
+Pass a `ChromaConfig` to `ChordChartEngine` to override defaults:
+
+```python
+from app.services.transcription.chord_chart import ChordChartEngine, ChromaConfig
+
+engine = ChordChartEngine(ChromaConfig(
+    method="stft",           # "cqt" | "stft" | "cens"
+    harmonic_stem="other",   # "preferred" | "mix" | "other" | "vocals"
+    n_alternatives=3,        # alternatives stored per measure
+))
+result = engine.analyze(song_path, title="My Song")
+# result.measure_analyses[i].chord, .confidence, .alternatives
+```
 
 **Current limitations:**
 - Notes are whole-rests (pitch transcription not yet implemented).
 - Key signature is hardcoded to C (Krumhansl–Schmuckler detection is a planned TODO).
-- Time signature is fixed to 4/4.
-- Analysis runs on the original mix; using the `other`/`vocals` Demucs stem would improve
-  harmonic accuracy (planned TODO).
+- Time signature is fixed to 4/4 (metre detection is a planned TODO).
+- Chord templates cover only major and minor triads (no 7ths, sus, diminished, etc.).
 
-**Dependency:** `librosa==0.11.0` (added to `requirements.txt`); ffmpeg is required for MP3 loading.
+**Dependency:** `librosa==0.11.0` (`requirements.txt`); ffmpeg is required for MP3 loading.
 
 ## How MusicXML works
 
@@ -107,10 +140,11 @@ and passes the new string — OSMD re-renders automatically.
 │   │       ├── processing.py      ← Demucs background pipeline
 │   │       ├── score/model.py     ← internal ScoreModel dataclasses
 │   │       ├── storage/paths.py   ← file path config
+│   │       ├── audio/stems.py     ← stem path helpers
 │   │       ├── audio/timing.py    ← TimingAnalyzer (librosa beat tracking)
 │   │       └── transcription/
 │   │           ├── base.py         ← TranscriptionEngine ABC
-│   │           ├── chord_chart.py  ← ChordChartEngine (real analysis, default)
+│   │           ├── chord_chart.py  ← ChordChartEngine (ChromaConfig, MeasureAnalysis, ChordChartResult)
 │   │           └── placeholder.py  ← fallback 8-measure scaffold
 │   ├── data/app.db                ← SQLite database
 │   ├── requirements.txt

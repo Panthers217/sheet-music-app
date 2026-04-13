@@ -28,6 +28,8 @@ def on_startup() -> None:
     Path("data").mkdir(parents=True, exist_ok=True)
     Path(os.getenv("UPLOAD_DIR", "./uploads")).mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    from app.db import run_migrations
+    run_migrations()
 
 
 app.include_router(router)

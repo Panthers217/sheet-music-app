@@ -6,7 +6,11 @@ Usage:
     chart = builder.create_from_score(song=song, score=score_model)
 """
 
+from __future__ import annotations
+
+import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
@@ -14,6 +18,9 @@ from app.models import Chart, ChartMeasure, ChartNote
 from app.services.score.model import ScoreModel
 from app.services.transcription.base import TranscriptionEngine
 from app.services.transcription.chord_chart import ChordChartEngine
+
+if TYPE_CHECKING:
+    from app.services.transcription.chord_chart import MeasureAnalysis
 
 
 class ChartBuilder:
@@ -32,9 +39,11 @@ class ChartBuilder:
         song_id: int,
         score: ScoreModel,
         stem_id: int | None = None,
+        analyses: list[MeasureAnalysis] | None = None,
     ) -> Chart:
         """
         Persist a ScoreModel into Chart / ChartMeasure / ChartNote rows.
+        Optionally accept per-measure analysis metadata (confidence, alternatives).
         Returns the newly created Chart (not yet committed — caller commits).
         """
         chart = Chart(
@@ -49,15 +58,25 @@ class ChartBuilder:
         self._db.add(chart)
         self._db.flush()  # get chart.id
 
+        # Build analysis lookup by measure number for O(1) access
+        analysis_by_number: dict[int, MeasureAnalysis] = {}
+        if analyses:
+            analysis_by_number = {a.measure_number: a for a in analyses}
+
         # Use first part only for now (single-part MVP)
         part = score.parts[0] if score.parts else None
         if part:
             for sm in part.measures:
+                analysis = analysis_by_number.get(sm.number)
                 measure = ChartMeasure(
                     chart_id=chart.id,
                     measure_number=sm.number,
                     chord_symbol=sm.chord_symbol,
                     time_sig_override=sm.time_sig_override,
+                    chord_confidence=analysis.confidence if analysis else None,
+                    chord_alternatives=(
+                        json.dumps(analysis.alternatives) if analysis and analysis.alternatives else None
+                    ),
                 )
                 self._db.add(measure)
                 self._db.flush()

@@ -121,6 +121,10 @@ class ChartMeasure(Base):
     chord_symbol: Mapped[str | None] = mapped_column(String(50), nullable=True)
     # Override time sig for this measure only (e.g. "3/4"); null = inherit from chart
     time_sig_override: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Chord analysis metadata (populated by ChordChartEngine)
+    chord_confidence: Mapped[float | None] = mapped_column("chord_confidence", nullable=True)
+    # JSON list of [[chord, score], ...] for top alternative candidates
+    chord_alternatives: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     chart: Mapped["Chart"] = relationship(back_populates="measures")
     notes: Mapped[list["ChartNote"]] = relationship(
