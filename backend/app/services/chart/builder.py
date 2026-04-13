@@ -90,6 +90,8 @@ class ChartBuilder:
                             duration=sn.duration,
                             is_rest=sn.is_rest,
                             velocity=sn.velocity,
+                            start_time_s=sn.start_time_s,
+                            end_time_s=sn.end_time_s,
                         )
                     )
 

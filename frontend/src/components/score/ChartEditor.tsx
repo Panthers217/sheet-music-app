@@ -12,6 +12,10 @@ export type ChartNote = {
   duration: string;
   is_rest: boolean;
   velocity: number | null;
+  /** Absolute playback time (seconds from track start). Present for MIDI charts; null for chord charts. */
+  start_time_s: number | null;
+  /** Absolute end time (seconds from track start). Present for MIDI charts; null for chord charts. */
+  end_time_s: number | null;
 };
 
 export type ChartMeasure = {

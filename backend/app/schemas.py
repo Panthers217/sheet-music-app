@@ -52,6 +52,9 @@ class ChartNoteResponse(BaseModel):
     duration: str
     is_rest: bool
     velocity: int | None = None
+    # Absolute playback timings from MIDI transcription; None for chord-only charts
+    start_time_s: float | None = None
+    end_time_s: float | None = None
 
     class Config:
         from_attributes = True

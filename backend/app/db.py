@@ -22,6 +22,8 @@ _MIGRATIONS = [
     "ALTER TABLE chart_measures ADD COLUMN chord_confidence REAL",
     "ALTER TABLE chart_measures ADD COLUMN chord_alternatives TEXT",
     "ALTER TABLE chart_notes ADD COLUMN velocity INTEGER",
+    "ALTER TABLE chart_notes ADD COLUMN start_time_s REAL",
+    "ALTER TABLE chart_notes ADD COLUMN end_time_s REAL",
 ]
 
 

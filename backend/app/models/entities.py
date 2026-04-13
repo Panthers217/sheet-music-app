@@ -148,6 +148,10 @@ class ChartNote(Base):
     is_rest: Mapped[bool] = mapped_column(Boolean, default=False)
     # MIDI velocity (0-127); None for chord-only charts
     velocity: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # Absolute playback timings (seconds from track start) — populated by MIDI transcription.
+    # None for chord-only charts (timing is computed from position + tempo instead).
+    start_time_s: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    end_time_s: Mapped[float | None] = mapped_column(nullable=True, default=None)
 
     measure: Mapped["ChartMeasure"] = relationship(back_populates="notes")
 

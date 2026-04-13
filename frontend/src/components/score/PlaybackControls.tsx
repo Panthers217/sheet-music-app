@@ -19,7 +19,7 @@ type Props = {
 };
 
 export default function PlaybackControls({ chart, osmd }: Props) {
-  const { play, pause, stop, state } = usePlayback(chart, osmd);
+  const { play, pause, stop, state, usingMidiTimings } = usePlayback(chart, osmd);
 
   const hasRealNotes = chart.measures.some((m) =>
     m.notes?.some((n) => !n.is_rest),
@@ -77,6 +77,13 @@ export default function PlaybackControls({ chart, osmd }: Props) {
       {!hasRealNotes && (
         <span style={{ fontSize: "0.8rem", color: "#aaa", marginLeft: "0.5rem" }}>
           (chord chart — cursor only, no audio)
+        </span>
+      )}
+
+      {/* Timing mode indicator */}
+      {hasRealNotes && (
+        <span style={{ fontSize: "0.75rem", color: usingMidiTimings ? "#22c55e" : "#888", marginLeft: "0.5rem" }}>
+          {usingMidiTimings ? "MIDI timing" : "grid timing"}
         </span>
       )}
     </div>

@@ -6,22 +6,30 @@
  * Drives note-level audio playback synced to an OSMD cursor.
  *
  * Architecture:
- *   Chart (measures + notes) → NoteEvent[] → Tone.Transport schedule
- *   Tone.Transport.seconds → RAF loop → cursor.next() until currentMeasure matches
+ *   Chart (measures + notes) → PlayableNote[] via notePlayer
+ *   → Tone.Transport.schedule() → RAF loop → cursor.next()
  *
- * Timing is computed entirely on the frontend from:
- *   measure_number, note.position (16th-note grid offset),
- *   note.duration, chart.tempo, chart.time_sig
+ * Timing mode is selected automatically:
+ *   MIDI charts  → start_time_s / end_time_s from Basic Pitch (precise)
+ *   Chord charts → computed from measure position + tempo (grid fallback)
  *
  * Future TODOs:
  *   - swing / triplet quantization
  *   - multi-part merging
- *   - velocity dynamics
- *   - use server-side start_time_s when available for higher accuracy
+ *   - velocity dynamics refinement
+ *   - loop playback
+ *   - note highlighting in OSMD
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Chart } from "./ChartEditor";
+import {
+  activeMeasureAt,
+  buildMeasureStarts,
+  buildPlayableNotes,
+  hasMidiTimings,
+  scheduleNotes,
+} from "@/lib/playback/notePlayer";
 
 // ---------------------------------------------------------------------------
 // OSMD handle — minimal interface that avoids importing opensheetmusicdisplay
@@ -37,84 +45,10 @@ export interface OsmdHandle {
 }
 
 // ---------------------------------------------------------------------------
-// Internal types
+// Public types
 // ---------------------------------------------------------------------------
 
 export type PlaybackState = "stopped" | "started" | "paused";
-
-interface NoteEvent {
-  pitch: string;
-  startSeconds: number;
-  toneDuration: string; // Tone.js format: "1n" | "2n" | "4n" | "8n" | "16n"
-  normalizedVelocity: number; // 0..1
-  isRest: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Duration tables
-// ---------------------------------------------------------------------------
-
-const DURATION_BEATS: Record<string, number> = {
-  whole: 4,
-  half: 2,
-  quarter: 1,
-  eighth: 0.5,
-  "16th": 0.25,
-};
-
-const DURATION_TONE: Record<string, string> = {
-  whole: "1n",
-  half: "2n",
-  quarter: "4n",
-  eighth: "8n",
-  "16th": "16n",
-};
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function buildNoteEvents(chart: Chart): NoteEvent[] {
-  const [beatsStr] = chart.time_sig.split("/");
-  const beatsPerMeasure = parseInt(beatsStr, 10) || 4;
-  const secondsPerBeat = 60 / chart.tempo;
-  const secondsPer16th = secondsPerBeat / 4;
-  const secondsPerMeasure = beatsPerMeasure * secondsPerBeat;
-
-  const events: NoteEvent[] = [];
-  for (const measure of chart.measures) {
-    const measureStart = (measure.measure_number - 1) * secondsPerMeasure;
-    for (const note of measure.notes ?? []) {
-      events.push({
-        pitch: note.pitch,
-        startSeconds: measureStart + note.position * secondsPer16th,
-        toneDuration: DURATION_TONE[note.duration] ?? "4n",
-        normalizedVelocity: note.velocity != null ? Math.max(0.05, note.velocity / 127) : 0.7,
-        isRest: note.is_rest,
-      });
-    }
-  }
-  return events.sort((a, b) => a.startSeconds - b.startSeconds);
-}
-
-function buildMeasureStartTimes(chart: Chart): number[] {
-  const [beatsStr] = chart.time_sig.split("/");
-  const beatsPerMeasure = parseInt(beatsStr, 10) || 4;
-  const secondsPerMeasure = (60 / chart.tempo) * beatsPerMeasure;
-  // index i → measure_number i+1
-  return chart.measures.map((m) => (m.measure_number - 1) * secondsPerMeasure);
-}
-
-function getCurrentMeasureIdx(seconds: number, starts: number[]): number {
-  let idx = 0;
-  for (let i = starts.length - 1; i >= 0; i--) {
-    if (seconds >= starts[i]) {
-      idx = i;
-      break;
-    }
-  }
-  return idx;
-}
 
 // ---------------------------------------------------------------------------
 // Hook
@@ -135,16 +69,24 @@ export function usePlayback(chart: Chart | null, osmd: OsmdHandle | null) {
     osmdRef.current = osmd;
   }, [osmd]);
 
-  const noteEvents = useMemo(
-    () => (chart ? buildNoteEvents(chart) : []),
+  // Derive playable notes (memoised — only changes when chart content changes)
+  const playableNotes = useMemo(
+    () => (chart ? buildPlayableNotes(chart) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [chart?.id, chart?.tempo, chart?.time_sig],
   );
 
-  const measureStartTimes = useMemo(
-    () => (chart ? buildMeasureStartTimes(chart) : []),
+  const measureStarts = useMemo(
+    () => (chart ? buildMeasureStarts(chart, playableNotes) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chart?.id, chart?.tempo, chart?.time_sig],
+    [chart?.id, chart?.tempo, chart?.time_sig, playableNotes],
+  );
+
+  // Expose timing mode so UI can show an indicator
+  const usingMidiTimings = useMemo(
+    () => (chart ? hasMidiTimings(chart) : false),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [chart?.id],
   );
 
   // ---- Cleanup on unmount or when chart changes -------------------------
@@ -172,48 +114,45 @@ export function usePlayback(chart: Chart | null, osmd: OsmdHandle | null) {
   }, [chart?.id]);
 
   // ---- Cursor RAF loop --------------------------------------------------
-  const startCursorLoop = useCallback(
-    (starts: number[]) => {
-      const tick = () => {
-        const Tone = toneRef.current;
-        if (!Tone) return;
+  const startCursorLoop = useCallback((starts: number[]) => {
+    const tick = () => {
+      const Tone = toneRef.current;
+      if (!Tone) return;
 
-        const transport = Tone.getTransport();
-        const transportState = transport.state;
+      const transport = Tone.getTransport();
+      const transportState = transport.state;
 
-        if (transportState === "stopped") {
-          setState("stopped");
-          osmdRef.current?.cursor.reset();
-          return;
-        }
+      if (transportState === "stopped") {
+        setState("stopped");
+        osmdRef.current?.cursor.reset();
+        return;
+      }
 
-        const seconds = transport.seconds;
-        const cursor = osmdRef.current?.cursor;
-        if (cursor) {
-          const targetMeasure = getCurrentMeasureIdx(seconds, starts);
-          try {
-            let cur = cursor.Iterator.CurrentMeasureIndex;
-            let safety = 0;
-            while (cur < targetMeasure && safety < 200) {
-              const prev = cur;
-              cursor.next();
-              cur = cursor.Iterator.CurrentMeasureIndex;
-              if (cur === prev) break; // cursor didn't advance (end of score)
-              safety++;
-            }
-          } catch {
-            // OSMD cursor may throw at end of score — ignore
+      const seconds = transport.seconds;
+      const cursor = osmdRef.current?.cursor;
+      if (cursor) {
+        const targetMeasure = activeMeasureAt(starts, seconds);
+        try {
+          let cur = cursor.Iterator.CurrentMeasureIndex;
+          let safety = 0;
+          while (cur < targetMeasure && safety < 200) {
+            const prev = cur;
+            cursor.next();
+            cur = cursor.Iterator.CurrentMeasureIndex;
+            if (cur === prev) break; // cursor didn't advance (end of score)
+            safety++;
           }
+        } catch {
+          // OSMD cursor may throw at end of score — ignore
         }
+      }
 
-        if (transportState === "started") {
-          rafRef.current = requestAnimationFrame(tick);
-        }
-      };
-      rafRef.current = requestAnimationFrame(tick);
-    },
-    [],
-  );
+      if (transportState === "started") {
+        rafRef.current = requestAnimationFrame(tick);
+      }
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  }, []);
 
   // ---- play -------------------------------------------------------------
   const play = useCallback(async () => {
@@ -232,7 +171,7 @@ export function usePlayback(chart: Chart | null, osmd: OsmdHandle | null) {
       // Resume from current position — no rescheduling needed
       transport.start();
       setState("started");
-      startCursorLoop(measureStartTimes);
+      startCursorLoop(measureStarts);
       return;
     }
 
@@ -240,7 +179,7 @@ export function usePlayback(chart: Chart | null, osmd: OsmdHandle | null) {
     transport.cancel();
     transport.stop();
 
-    // Set tempo
+    // Set BPM — useful for grid-fallback mode; harmless for MIDI mode
     if (chart) {
       transport.bpm.value = chart.tempo;
     }
@@ -262,36 +201,19 @@ export function usePlayback(chart: Chart | null, osmd: OsmdHandle | null) {
       }
     }
     const synth = new Tone.PolySynth(Tone.Synth).toDestination();
-    // Softer, shorter envelope for instrument-like sound
     synth.set({
       oscillator: { type: "triangle" },
       envelope: { attack: 0.01, decay: 0.1, sustain: 0.5, release: 0.3 },
     });
     synthRef.current = synth;
 
-    // Schedule all non-rest notes
-    for (const event of noteEvents) {
-      if (!event.isRest) {
-        // eslint-disable-next-line no-loop-func
-        Tone.getTransport().schedule((time: number) => {
-          try {
-            synth.triggerAttackRelease(
-              event.pitch,
-              event.toneDuration,
-              time,
-              event.normalizedVelocity,
-            );
-          } catch {
-            // ignore invalid pitches (e.g. percussion)
-          }
-        }, event.startSeconds);
-      }
-    }
+    // Schedule all non-rest notes via notePlayer helper
+    scheduleNotes(Tone, synth, playableNotes);
 
     transport.start();
     setState("started");
-    startCursorLoop(measureStartTimes);
-  }, [chart, noteEvents, measureStartTimes, startCursorLoop]);
+    startCursorLoop(measureStarts);
+  }, [chart, playableNotes, measureStarts, startCursorLoop]);
 
   // ---- pause ------------------------------------------------------------
   const pause = useCallback(async () => {
@@ -324,5 +246,6 @@ export function usePlayback(chart: Chart | null, osmd: OsmdHandle | null) {
     setState("stopped");
   }, []);
 
-  return { play, pause, stop, state };
+  return { play, pause, stop, state, usingMidiTimings };
 }
+
