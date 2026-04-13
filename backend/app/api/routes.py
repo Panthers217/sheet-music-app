@@ -2,13 +2,25 @@ import os
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal, get_db
-from app.models import ChartEdit, ProcessingJob, Project, Song
-from app.schemas import ChartEditResponse, ChartEditUpdate, ProjectCreate, ProjectResponse, ProjectUpdate
+from app.models import Chart, ChartEdit, ChartMeasure, ChartNote, Export, ProcessingJob, Project, Song, Stem
+from app.schemas import (
+    ChartEditResponse,
+    ChartEditUpdate,
+    ChartMeasureUpdate,
+    ChartMetadataUpdate,
+    ChartResponse,
+    ProjectCreate,
+    ProjectResponse,
+    ProjectUpdate,
+)
+from app.services.chart.builder import ChartBuilder
+from app.services.musicxml.generator import MusicXMLGenerator
 from app.services.processing import PlaceholderProcessingPipeline
+from app.services.storage import paths as storage
 
 router = APIRouter(prefix="/api")
 pipeline = PlaceholderProcessingPipeline()
@@ -16,6 +28,7 @@ UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "./uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_AUDIO_MIME_TYPES = {"audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/wave"}
 ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".wav"}
+_xml_generator = MusicXMLGenerator()
 
 
 @router.get("/health")
@@ -196,3 +209,158 @@ def update_chart(chart_id: int, payload: ChartEditUpdate, db: Session = Depends(
     db.commit()
     db.refresh(chart)
     return chart
+
+
+# ---------------------------------------------------------------------------
+# Structured chart endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post("/songs/{song_id}/charts", response_model=ChartResponse)
+def create_chart(song_id: int, db: Session = Depends(get_db)) -> Chart:
+    """
+    Generate a new structured chart for a song using the placeholder
+    transcription engine.  Returns the saved Chart entity.
+    """
+    song = db.query(Song).filter(Song.id == song_id).first()
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+
+    audio_path = Path(song.file_path)
+    if not audio_path.exists():
+        raise HTTPException(status_code=400, detail="Audio file not found on disk")
+
+    builder = ChartBuilder(db)
+    score = builder.build_score_from_song(audio_path=audio_path, title=song.title)
+    chart = builder.create_from_score(song_id=song.id, score=score)
+
+    db.commit()
+    db.refresh(chart)
+    return chart
+
+
+@router.get("/charts/{chart_id}", response_model=ChartResponse)
+def get_chart(chart_id: int, db: Session = Depends(get_db)) -> Chart:
+    chart = db.query(Chart).filter(Chart.id == chart_id).first()
+    if not chart:
+        raise HTTPException(status_code=404, detail="Chart not found")
+    return chart
+
+
+@router.patch("/charts/{chart_id}", response_model=ChartResponse)
+def update_chart_metadata(
+    chart_id: int, payload: ChartMetadataUpdate, db: Session = Depends(get_db)
+) -> Chart:
+    """Update title, tempo, key_sig, or time_sig without touching measures."""
+    chart = db.query(Chart).filter(Chart.id == chart_id).first()
+    if not chart:
+        raise HTTPException(status_code=404, detail="Chart not found")
+
+    if payload.title is not None:
+        chart.title = payload.title
+    if payload.tempo is not None:
+        chart.tempo = payload.tempo
+    if payload.key_sig is not None:
+        chart.key_sig = payload.key_sig
+    if payload.time_sig is not None:
+        chart.time_sig = payload.time_sig
+    chart.status = "user_edited"
+
+    db.commit()
+    db.refresh(chart)
+    return chart
+
+
+@router.patch("/charts/{chart_id}/measures/{measure_id}", response_model=ChartResponse)
+def update_chart_measure(
+    chart_id: int,
+    measure_id: int,
+    payload: ChartMeasureUpdate,
+    db: Session = Depends(get_db),
+) -> Chart:
+    """Update a single measure's chord symbol, time sig override, or notes."""
+    chart = db.query(Chart).filter(Chart.id == chart_id).first()
+    if not chart:
+        raise HTTPException(status_code=404, detail="Chart not found")
+
+    measure = db.query(ChartMeasure).filter(
+        ChartMeasure.id == measure_id, ChartMeasure.chart_id == chart_id
+    ).first()
+    if not measure:
+        raise HTTPException(status_code=404, detail="Measure not found")
+
+    if payload.chord_symbol is not None:
+        measure.chord_symbol = payload.chord_symbol
+    if payload.time_sig_override is not None:
+        measure.time_sig_override = payload.time_sig_override
+
+    if payload.notes is not None:
+        # Replace all notes for this measure
+        db.query(ChartNote).filter(ChartNote.measure_id == measure_id).delete()
+        for n in payload.notes:
+            db.add(
+                ChartNote(
+                    measure_id=measure_id,
+                    position=n.position,
+                    pitch=n.pitch,
+                    duration=n.duration,
+                    is_rest=n.is_rest,
+                )
+            )
+
+    chart.status = "user_edited"
+    db.commit()
+    db.refresh(chart)
+    return chart
+
+
+@router.get("/charts/{chart_id}/musicxml")
+def get_chart_musicxml(chart_id: int, db: Session = Depends(get_db)) -> Response:
+    """
+    Generate (or serve cached) MusicXML for a chart.
+    Returns the raw XML with content-type application/xml.
+    """
+    chart = db.query(Chart).filter(Chart.id == chart_id).first()
+    if not chart:
+        raise HTTPException(status_code=404, detail="Chart not found")
+
+    song = db.query(Song).filter(Song.id == chart.song_id).first()
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+
+    # Re-hydrate score model from DB and generate MusicXML
+    from app.services.chart.builder import ChartBuilder as CB
+
+    score = CB(db).score_from_chart(chart)
+    xml_str = _xml_generator.generate(score)
+
+    # Persist the file next to stems
+    xml_path = storage.musicxml_file_path(song.project_id, chart_id)
+    xml_path.write_text(xml_str, encoding="utf-8")
+
+    # Track export record (upsert by chart_id + format)
+    export = db.query(Export).filter(Export.chart_id == chart_id, Export.format == "musicxml").first()
+    if export:
+        export.file_path = str(xml_path)
+    else:
+        db.add(Export(chart_id=chart_id, format="musicxml", file_path=str(xml_path)))
+    db.commit()
+
+    return Response(content=xml_str, media_type="application/xml")
+
+
+@router.get("/songs/{song_id}/stems")
+def list_stems(song_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    song = db.query(Song).filter(Song.id == song_id).first()
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+    return [
+        {
+            "id": s.id,
+            "stem_type": s.stem_type,
+            "file_path": s.file_path,
+            "status": s.status,
+        }
+        for s in sorted(song.stems, key=lambda x: x.id)
+    ]
+
