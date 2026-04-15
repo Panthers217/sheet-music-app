@@ -55,6 +55,9 @@ class ChartNoteResponse(BaseModel):
     # Absolute playback timings from MIDI transcription; None for chord-only charts
     start_time_s: float | None = None
     end_time_s: float | None = None
+    # Quantized notation fields for score display
+    notation_position: int | None = None
+    notation_duration: str | None = None
 
     class Config:
         from_attributes = True

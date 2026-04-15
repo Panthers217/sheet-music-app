@@ -336,6 +336,9 @@ def update_chart_measure(
                     pitch=n.pitch,
                     duration=n.duration,
                     is_rest=n.is_rest,
+                    # User-edited notes are already on the grid — mirror as notation fields
+                    notation_position=n.position,
+                    notation_duration=n.duration,
                 )
             )
 

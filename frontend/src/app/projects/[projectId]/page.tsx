@@ -8,6 +8,8 @@ import { API_BASE_URL, apiFetch } from "@/components/api";
 import ChartEditor, { type Chart as StructuredChart } from "@/components/score/ChartEditor";
 import type { OsmdHandle } from "@/components/score/usePlayback";
 
+const ScoreEditor = dynamic(() => import("@/components/score/ScoreEditor"), { ssr: false });
+
 // OSMD and PlaybackControls touch browser APIs — load client-side only
 const ScoreViewer = dynamic(() => import("@/components/score/ScoreViewer"), { ssr: false });
 const PlaybackControls = dynamic(
@@ -228,6 +230,14 @@ export default function ProjectDetailPage() {
     fetchMusicXml(updated.id).catch(console.error);
   }
 
+  function onMidiChartSaved(updated: StructuredChart) {
+    setMidiChart(updated);
+    fetch(`${API_BASE_URL}/api/charts/${updated.id}/musicxml`)
+      .then((r) => (r.ok ? r.text() : Promise.reject(r)))
+      .then(setMidiMusicXml)
+      .catch(console.error);
+  }
+
   if (!project) return <p>Loading project…</p>;
 
   const firstSong = project.songs[0] ?? null;
@@ -387,6 +397,8 @@ export default function ProjectDetailPage() {
           </p>
           {chartMessage && <p style={{ color: "red" }}>{chartMessage}</p>}
           <ChartEditor chart={structuredChart} onSaved={onChartSaved} />
+          <h3 style={{ marginTop: "1.5rem" }}>Note editor</h3>
+          <ScoreEditor chart={structuredChart} onSaved={onChartSaved} />
           <h3 style={{ marginTop: "1.5rem" }}>Score preview</h3>
           <ScoreViewer musicXml={musicXml} height="500px" onOsmdReady={setOsmd} />
           <PlaybackControls chart={structuredChart} osmd={osmd} />
@@ -410,6 +422,8 @@ export default function ProjectDetailPage() {
           )}
           {midiChart && (
             <>
+              <h3 style={{ marginTop: "0.5rem" }}>Note editor</h3>
+              <ScoreEditor chart={midiChart} onSaved={onMidiChartSaved} />
               <PlaybackControls chart={midiChart} osmd={midiOsmd} />
               <h3 style={{ marginTop: "1rem" }}>Score preview</h3>
               <ScoreViewer musicXml={midiMusicXml} height="500px" onOsmdReady={setMidiOsmd} />
