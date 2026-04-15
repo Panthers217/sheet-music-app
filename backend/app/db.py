@@ -24,6 +24,9 @@ _MIGRATIONS = [
     "ALTER TABLE chart_notes ADD COLUMN velocity INTEGER",
     "ALTER TABLE chart_notes ADD COLUMN start_time_s REAL",
     "ALTER TABLE chart_notes ADD COLUMN end_time_s REAL",
+    # Notation timing layer (separate from raw MIDI performance timing)
+    "ALTER TABLE chart_notes ADD COLUMN notation_position INTEGER",
+    "ALTER TABLE chart_notes ADD COLUMN notation_duration TEXT",
 ]
 
 

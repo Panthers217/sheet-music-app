@@ -148,10 +148,14 @@ class ChartNote(Base):
     is_rest: Mapped[bool] = mapped_column(Boolean, default=False)
     # MIDI velocity (0-127); None for chord-only charts
     velocity: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
-    # Absolute playback timings (seconds from track start) — populated by MIDI transcription.
+    # Performance timing — absolute times (seconds from track start) from MIDI transcription.
     # None for chord-only charts (timing is computed from position + tempo instead).
     start_time_s: Mapped[float | None] = mapped_column(nullable=True, default=None)
     end_time_s: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    # Notation timing — quantized for score rendering; None falls back to position/duration.
+    # Derived by NotationQuantizer; used by MusicXML generator for clean measure-aware output.
+    notation_position: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    notation_duration: Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
 
     measure: Mapped["ChartMeasure"] = relationship(back_populates="notes")
 

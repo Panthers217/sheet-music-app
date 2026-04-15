@@ -20,10 +20,14 @@ class ScoreNote:
     duration: str = "quarter"  # "whole" | "half" | "quarter" | "eighth" | "16th"
     is_rest: bool = False
     position: int = 0  # 16th-note grid offset within measure (0 = beat 1)
-    # Playback readiness fields — populated by MIDI-derived transcriptions
+    # Performance timing — raw MIDI times, used by Tone.js for audio scheduling
     velocity: Optional[int] = None  # MIDI velocity 0-127
     start_time_s: Optional[float] = None  # absolute start time in seconds
     end_time_s: Optional[float] = None  # absolute end time in seconds
+    # Notation timing — quantized for score rendering (None = fall back to duration/position)
+    # Set by NotationQuantizer; used by MusicXML generator instead of raw snapped values.
+    notation_duration: Optional[str] = None  # quantized symbolic duration for MusicXML
+    notation_position: Optional[int] = None  # quantized 16th-note grid position for MusicXML
 
 
 @dataclass

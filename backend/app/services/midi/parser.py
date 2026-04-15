@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 import pretty_midi
 
+from app.services.audio.quantizer import NotationQuantizer
 from app.services.score.model import ScoreMeasure, ScoreModel, ScoreNote, ScorePart
 
 if TYPE_CHECKING:
@@ -197,7 +198,7 @@ class MidiParser:
             measures=score_measures,
         )
 
-        return ScoreModel(
+        score = ScoreModel(
             title=title,
             tempo=int(round(tempo_bpm)),
             key="C",  # key detection is out-of-scope for MIDI transcription
@@ -205,6 +206,11 @@ class MidiParser:
             parts=[part],
             source="basic_pitch",
         )
+        # Run notation quantizer to set notation_position / notation_duration
+        # on every note.  Performance timing (start_time_s/end_time_s) is
+        # preserved unchanged.
+        NotationQuantizer().quantize(score)
+        return score
 
     # ------------------------------------------------------------------
     # Helpers

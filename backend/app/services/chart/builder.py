@@ -92,6 +92,8 @@ class ChartBuilder:
                             velocity=sn.velocity,
                             start_time_s=sn.start_time_s,
                             end_time_s=sn.end_time_s,
+                            notation_position=sn.notation_position,
+                            notation_duration=sn.notation_duration,
                         )
                     )
 
@@ -112,6 +114,11 @@ class ChartBuilder:
                     duration=cn.duration,
                     is_rest=cn.is_rest,
                     position=cn.position,
+                    velocity=cn.velocity,
+                    start_time_s=cn.start_time_s,
+                    end_time_s=cn.end_time_s,
+                    notation_position=cn.notation_position,
+                    notation_duration=cn.notation_duration,
                 )
                 for cn in cm.notes
             ]

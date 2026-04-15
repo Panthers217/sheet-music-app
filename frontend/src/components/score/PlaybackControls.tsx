@@ -10,6 +10,7 @@
  * The component is intentionally dumb — all logic lives in usePlayback.
  */
 
+import { useState } from "react";
 import type { Chart } from "./ChartEditor";
 import { type OsmdHandle, usePlayback } from "./usePlayback";
 
@@ -19,7 +20,8 @@ type Props = {
 };
 
 export default function PlaybackControls({ chart, osmd }: Props) {
-  const { play, pause, stop, state, usingMidiTimings } = usePlayback(chart, osmd);
+  const [autoScroll, setAutoScroll] = useState(false);
+  const { play, pause, stop, state, usingMidiTimings } = usePlayback(chart, osmd, autoScroll);
 
   const hasRealNotes = chart.measures.some((m) =>
     m.notes?.some((n) => !n.is_rest),
@@ -67,6 +69,29 @@ export default function PlaybackControls({ chart, osmd }: Props) {
       >
         ⏹ Stop
       </button>
+
+      {/* Auto-scroll toggle */}
+      <label
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "0.25rem",
+          fontSize: "0.8rem",
+          color: "#555",
+          cursor: "pointer",
+          marginLeft: "0.25rem",
+          userSelect: "none",
+        }}
+        title="Scroll the score to follow the playhead"
+      >
+        <input
+          type="checkbox"
+          checked={autoScroll}
+          onChange={(e) => setAutoScroll(e.target.checked)}
+          style={{ cursor: "pointer" }}
+        />
+        Auto-scroll
+      </label>
 
       {/* Status */}
       <span style={{ fontSize: "0.8rem", color: "#888", marginLeft: "0.25rem" }}>

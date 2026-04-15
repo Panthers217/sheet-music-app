@@ -159,29 +159,34 @@ export function buildMeasureStarts(chart: Chart, notes: PlayableNote[]): number[
   const secondsPerMeasure = bpm * spb;
 
   const count = chart.measures.length;
-  // Default: grid fallback
-  const starts: number[] = chart.measures.map((m) => (m.measure_number - 1) * secondsPerMeasure);
+  // Initialise to null — we'll fill real timing from notes, then fall back to grid
+  const starts: (number | null)[] = new Array(count).fill(null);
 
-  // Override with first-note timing if real timings are present
+  // Override with real MIDI timing: first non-rest note per measure wins
+  // (notes are already sorted by startSec from buildPlayableNotes)
   for (const n of notes) {
-    if (!n.isRest && starts[n.measureIdx] !== undefined) {
-      // Only update if this is the earliest note we've seen for this measure
-      if (n.startSec < starts[n.measureIdx] || starts[n.measureIdx] === (n.measureIdx * secondsPerMeasure)) {
-        // Use the note's actual start time only if it's the first note of the measure
-        // (notes are already sorted, so first match wins)
-        starts[n.measureIdx] = n.startSec;
-      }
+    if (!n.isRest && n.measureIdx < count && starts[n.measureIdx] === null) {
+      starts[n.measureIdx] = n.startSec;
     }
   }
 
-  // Ensure strictly non-decreasing (safety guard)
+  // Fill remaining gaps with grid fallback
+  for (let i = 0; i < count; i++) {
+    if (starts[i] === null) {
+      starts[i] = (chart.measures[i].measure_number - 1) * secondsPerMeasure;
+    }
+  }
+
+  const filled = starts as number[];
+
+  // Ensure strictly non-decreasing (safety guard against timing anomalies)
   for (let i = 1; i < count; i++) {
-    if (starts[i] < starts[i - 1]) {
-      starts[i] = starts[i - 1];
+    if (filled[i] < filled[i - 1]) {
+      filled[i] = filled[i - 1];
     }
   }
 
-  return starts;
+  return filled;
 }
 
 /**

@@ -9,16 +9,14 @@
  *   Chart (measures + notes) → PlayableNote[] via notePlayer
  *   → Tone.Transport.schedule() → RAF loop → cursor.next()
  *
- * Timing mode is selected automatically:
- *   MIDI charts  → start_time_s / end_time_s from Basic Pitch (precise)
+ * Timing layers:
+ *   MIDI charts  → start_time_s / end_time_s (performance timing, precise)
  *   Chord charts → computed from measure position + tempo (grid fallback)
+ *   OSMD cursor  → advances by notation measure boundaries (notation timing)
  *
- * Future TODOs:
- *   - swing / triplet quantization
- *   - multi-part merging
- *   - velocity dynamics refinement
- *   - loop playback
- *   - note highlighting in OSMD
+ * The measureStarts array bridges both layers: it maps each notation measure
+ * index to the transport time when that measure starts, using real MIDI
+ * timings when available or the grid fallback otherwise.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -41,6 +39,8 @@ export interface OsmdHandle {
     reset(): void;
     next(): void;
     Iterator: { CurrentMeasureIndex: number };
+    /** The SVG/DOM element representing the cursor line — used for auto-scroll. */
+    CursorElement?: HTMLElement | null;
   };
 }
 
@@ -54,7 +54,12 @@ export type PlaybackState = "stopped" | "started" | "paused";
 // Hook
 // ---------------------------------------------------------------------------
 
-export function usePlayback(chart: Chart | null, osmd: OsmdHandle | null) {
+export function usePlayback(
+  chart: Chart | null,
+  osmd: OsmdHandle | null,
+  /** When true, the score container scrolls to keep the playhead visible. */
+  autoScroll = false,
+) {
   const [state, setState] = useState<PlaybackState>("stopped");
 
   // Stable refs — never cause re-renders
@@ -63,11 +68,11 @@ export function usePlayback(chart: Chart | null, osmd: OsmdHandle | null) {
   const toneRef = useRef<typeof import("tone") | null>(null);
   const rafRef = useRef<number>(0);
   const osmdRef = useRef(osmd);
+  const autoScrollRef = useRef(autoScroll);
 
-  // Keep osmdRef fresh without adding it to effect deps
-  useEffect(() => {
-    osmdRef.current = osmd;
-  }, [osmd]);
+  // Keep refs fresh without adding them to effect deps
+  useEffect(() => { osmdRef.current = osmd; }, [osmd]);
+  useEffect(() => { autoScrollRef.current = autoScroll; }, [autoScroll]);
 
   // Derive playable notes (memoised — only changes when chart content changes)
   const playableNotes = useMemo(
@@ -124,7 +129,7 @@ export function usePlayback(chart: Chart | null, osmd: OsmdHandle | null) {
 
       if (transportState === "stopped") {
         setState("stopped");
-        osmdRef.current?.cursor.reset();
+        try { osmdRef.current?.cursor.reset(); } catch { /* ignore */ }
         return;
       }
 
@@ -144,6 +149,18 @@ export function usePlayback(chart: Chart | null, osmd: OsmdHandle | null) {
           }
         } catch {
           // OSMD cursor may throw at end of score — ignore
+        }
+
+        // Auto-scroll: bring the cursor element into view if enabled
+        if (autoScrollRef.current) {
+          try {
+            const el = cursor.CursorElement;
+            if (el) {
+              el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }
+          } catch {
+            // scrollIntoView may not be available in all environments
+          }
         }
       }
 
@@ -238,6 +255,7 @@ export function usePlayback(chart: Chart | null, osmd: OsmdHandle | null) {
         // ignore
       }
     }
+    // Reset cursor immediately (don't wait for next RAF tick)
     try {
       osmdRef.current?.cursor.reset();
     } catch {

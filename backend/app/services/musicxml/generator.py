@@ -91,8 +91,11 @@ def _parse_pitch(pitch_str: str) -> tuple[str, str | None, int]:
 
 def _build_note_element(note: ScoreNote) -> ET.Element:
     el = ET.Element("note")
-    ticks = _DURATION_TICKS.get(note.duration, 4)
-    note_type = _DURATION_TYPE.get(note.duration, "quarter")
+    # Use notation_duration when available (quantized for clean measure rendering);
+    # fall back to the raw-snapped duration for backward compat.
+    effective_duration = note.notation_duration or note.duration
+    ticks = _DURATION_TICKS.get(effective_duration, 4)
+    note_type = _DURATION_TYPE.get(effective_duration, "quarter")
 
     if note.is_rest:
         ET.SubElement(el, "rest")
@@ -197,7 +200,8 @@ def _build_measure(
 
     # --- Notes ---
     if measure.notes:
-        for note in sorted(measure.notes, key=lambda n: n.position):
+        # Sort by notation_position when available, else raw position
+        for note in sorted(measure.notes, key=lambda n: n.notation_position if n.notation_position is not None else n.position):
             m_el.append(_build_note_element(note))
     else:
         # Default: whole rest

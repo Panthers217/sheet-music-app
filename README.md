@@ -45,8 +45,71 @@ MusicXML is always regenerated from that model on demand.
 - ✅ OSMD score preview in project page
 - ✅ Form-based chart editor (title, tempo, key, time sig, chord symbols per measure)
 - ✅ MusicXML auto-regenerated after edits
+- ✅ Notation timing layer with configurable quantization (separate from playback timing)
+- ✅ Playback/notation timing split: MIDI timing for audio, quantized notation for score rendering
+- ✅ Playhead auto-scroll (opt-in checkbox in playback controls)
 
-## How Demucs fits in
+## Timing model: playback timing vs. notation timing
+
+MIDI-derived charts carry two separate timing layers per note.  They serve
+different purposes and must not be conflated.
+
+### Performance timing (for audio playback)
+Stored in `start_time_s` / `end_time_s` on each `ChartNote` / `ScoreNote`.
+These are **raw values from Basic Pitch** — the exact seconds at which the
+model detected each note in the audio.  Tone.js uses these directly when
+scheduling notes, so playback sounds tight and accurate.
+
+### Notation timing (for score rendering)
+Stored in `notation_position` / `notation_duration` on each `ChartNote` /
+`ScoreNote`.  These are **derived by `NotationQuantizer`** after MIDI parsing:
+
+1. `notation_position` — the note's 16th-note grid slot within its measure,
+   computed from `start_time_s`, the chart tempo, and the configured
+   quantization grid ("16th" by default).
+2. `notation_duration` — the nearest symbolic duration ("whole", "half",
+   "quarter", "eighth", "16th"), **clamped** to fit within the remaining
+   space in the measure.  This prevents MusicXML overflow errors.
+
+When `notation_position` / `notation_duration` are `None` (chord-only charts
+with no MIDI timing), the generator falls back to `position` / `duration`.
+
+### Why they're separate
+Raw MIDI onset times don't align neatly with a rhythmic grid.  A note played
+on beat 2 might have `start_time_s = 1.487 s` instead of the grid-perfect
+`1.500 s`.  Using raw times for notation would scatter noteheads across
+non-standard positions in the MusicXML.  Using quantized notation values for
+audio would introduce slight rhythmic jitter in playback.  Keeping them
+separate gives the best of both worlds.
+
+### Data flow summary
+
+```
+Basic Pitch MIDI
+      │
+      ▼
+  MidiParser  ──── raw snap ───▶  position, duration   (notation fallback)
+      │             ──── raw ───▶  start_time_s, end_time_s  (performance)
+      │
+      ▼
+NotationQuantizer
+      │   (reads start_time_s/end_time_s + tempo + time_sig)
+      ▼
+  notation_position, notation_duration   (clamped, grid-aligned)
+      │
+      ├──▶ MusicXML generator  (uses notation_position / notation_duration)
+      │
+      └──▶ Tone.js (uses start_time_s / end_time_s — unchanged)
+```
+
+### Configuring quantization
+The grid defaults to 16th notes.  To use a coarser grid (e.g. eighth notes):
+
+```python
+from app.services.audio.quantizer import NotationQuantizer
+quantizer = NotationQuantizer()
+quantizer.quantize(score, grid="eighth")
+```
 
 Upload triggers `demucs.separate -n htdemucs` in a FastAPI `BackgroundTask`.
 Stems are written to `uploads/{project_id}/stems/htdemucs/{song_stem}/`.

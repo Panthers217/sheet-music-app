@@ -16,6 +16,10 @@ export type ChartNote = {
   start_time_s: number | null;
   /** Absolute end time (seconds from track start). Present for MIDI charts; null for chord charts. */
   end_time_s: number | null;
+  /** Quantized 16th-note grid position for score rendering. Falls back to position when null. */
+  notation_position: number | null;
+  /** Quantized symbolic duration for score rendering. Falls back to duration when null. */
+  notation_duration: string | null;
 };
 
 export type ChartMeasure = {
