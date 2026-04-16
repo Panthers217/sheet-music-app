@@ -56,6 +56,57 @@ function effectiveDur(tool: ToolState): string {
   return tool.dotted ? `dotted-${tool.duration}` : tool.duration;
 }
 
+// ─── Auto-rest gap filling ─────────────────────────────────────────────────
+
+type AutoRest = { slot: number; duration: string };
+
+/**
+ * Return fill rests for every unoccupied slot in a measure.
+ * Uses a greedy largest-first algorithm so the fewest rests are drawn.
+ * Returns [] when notes is empty (the centered whole-measure rest is shown instead).
+ */
+function computeAutoRests(notes: ChartNote[], totalSlots: number): AutoRest[] {
+  if (notes.length === 0) return [];
+
+  // Mark occupied slots
+  const occ = new Uint8Array(totalSlots);
+  for (const note of notes) {
+    const s = note.notation_position ?? note.position;
+    const d = DURATION_SLOTS[note.notation_duration ?? note.duration] ?? 4;
+    for (let i = s; i < Math.min(s + d, totalSlots); i++) occ[i] = 1;
+  }
+
+  // All durations sorted largest → smallest for greedy fill
+  const fillDurs = (Object.entries(DURATION_SLOTS) as [string, number][])
+    .sort(([, a], [, b]) => b - a);
+
+  const rests: AutoRest[] = [];
+  let cursor = 0;
+  while (cursor < totalSlots) {
+    if (occ[cursor]) { cursor++; continue; }
+    // Find end of this contiguous free run
+    let freeEnd = cursor;
+    while (freeEnd < totalSlots && !occ[freeEnd]) freeEnd++;
+    // Greedily fill the run
+    let pos = cursor;
+    while (pos < freeEnd) {
+      const remaining = freeEnd - pos;
+      let placed = false;
+      for (const [dur, slots] of fillDurs) {
+        if (slots <= remaining) {
+          rests.push({ slot: pos, duration: dur });
+          pos += slots;
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) break; // smallest slot is 1 — shouldn't happen
+    }
+    cursor = freeEnd;
+  }
+  return rests;
+}
+
 // ─── Pitch model ──────────────────────────────────────────────────────────────
 
 interface StepDef { pitch: string; isLine: boolean }
@@ -477,7 +528,12 @@ function MeasurePanel({
     onPlace(slot, c.row);
   }
 
-  const isEmpty = sm.notes.length === 0;
+  const isEmpty    = sm.notes.length === 0;
+  // Compute fill rests for all unoccupied slots (empty when nothing placed yet)
+  const autoRests  = computeAutoRests(sm.notes, totalSlots);
+  // Y-centre for auto-rest symbols: B4 (middle staff line) for quarter/8th/16th;
+  // NoteHead uses REST_LINE_Y for whole/half regardless of cy.
+  const autoRestCy = B4_DROW * ROW_H + ROW_H / 2;
 
   return (
     <div style={{
@@ -545,6 +601,30 @@ function MeasurePanel({
 
         {/* ── Whole-measure rest — centered in measure ─────── */}
         {isEmpty && <WholeMeasureRest cx={measureW / 2} />}
+
+        {/* ── Auto-fill rests (non-interactive, faded) ─────── */}
+        {autoRests.map((ar) => {
+          const durSl = DURATION_SLOTS[ar.duration] ?? 4;
+          const cx    = ar.slot * slotW + slotW / 2;
+          return (
+            <g key={`ar${ar.slot}-${ar.duration}`}
+              style={{ pointerEvents: "none", opacity: 0.55 }}>
+              {/* Subtle blue tint band so fill-rests are clearly distinct */}
+              <rect
+                x={ar.slot * slotW + 1} y={STAFF_TOP}
+                width={durSl * slotW - 2} height={STAFF_BOT - STAFF_TOP + ROW_H}
+                fill="rgba(99,179,237,0.10)" />
+              <NoteHead
+                cx={cx} cy={autoRestCy}
+                duration={ar.duration}
+                isRest={true}
+                selected={false}
+                acc="" dir="up"
+                slots={durSl} slotW={slotW}
+              />
+            </g>
+          );
+        })}
 
         {/* ── Notes ────────────────────────────────────────── */}
         {noteData.map(({ note, ni, cx, cy, dur, durSl, ac, leds, sel, dir }) => {

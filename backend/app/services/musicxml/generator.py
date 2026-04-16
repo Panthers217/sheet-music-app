@@ -214,6 +214,26 @@ def _largest_fitting_duration(slots: int) -> str | None:
     return None
 
 
+def _write_fill_rests(parent: ET.Element, start: int, end: int) -> None:
+    """
+    Append rest <note> elements to *parent* to fill the slot range [start, end).
+    Uses greedy largest-first fill so the fewest elements are written.
+    """
+    pos = start
+    while pos < end:
+        remaining = end - pos
+        dur = _largest_fitting_duration(remaining)
+        if dur is None:
+            break
+        rest_el = ET.SubElement(parent, "note")
+        ET.SubElement(rest_el, "rest")
+        _sub(rest_el, "duration", str(_DURATION_TICKS[dur]))
+        _sub(rest_el, "type", _DURATION_TYPE[dur])
+        if dur.startswith("dotted-"):
+            ET.SubElement(rest_el, "dot")
+        pos += _DURATION_TICKS[dur]
+
+
 def _sub(parent: ET.Element, tag: str, text: str | None = None, **attrib: str) -> ET.Element:
     el = ET.SubElement(parent, tag, **attrib)
     if text is not None:
@@ -384,12 +404,17 @@ def _build_measure(
         effective_time_sig = measure.time_sig_override or chart_time_sig
         capacity = _measure_capacity(effective_time_sig)
         beam_roles = _compute_beam_roles(sorted_notes, effective_time_sig)
+        cursor = 0          # tracks the next unfilled slot
         notes_written = 0
         for note, (role, _group_id) in zip(sorted_notes, beam_roles):
             pos = note.notation_position if note.notation_position is not None else note.position
             # Skip notes that start at or beyond the measure boundary
             if pos >= capacity:
                 continue
+            # Fill any gap between the current cursor and this note's start
+            if pos > cursor:
+                _write_fill_rests(m_el, cursor, pos)
+                cursor = pos
             effective_dur = note.notation_duration or note.duration
             ticks = _DURATION_TICKS.get(effective_dur, 4)
             duration_override: str | None = None
@@ -399,16 +424,19 @@ def _build_measure(
                 if clamped is None:
                     continue  # no standard duration fits; skip
                 duration_override = clamped
+                ticks = _DURATION_TICKS[clamped]
             m_el.append(_build_note_element(note, beam_role=role, duration_override=duration_override))
             notes_written += 1
+            cursor = pos + ticks
+        # Fill any remaining space after the last note
+        if cursor < capacity:
+            _write_fill_rests(m_el, cursor, capacity)
         if notes_written == 0:
-            # All notes were out-of-bounds or unrepresentable; write a whole rest
-            rest_el = ET.SubElement(m_el, "note")
-            ET.SubElement(rest_el, "rest", measure="yes")
-            _sub(rest_el, "duration", str(_DURATION_TICKS["whole"]))
-            _sub(rest_el, "type", "whole")
+            # All notes were out-of-bounds; _write_fill_rests already covered 0→capacity.
+            # If cursor is still 0 the fill loop above ran; nothing more to do.
+            pass
     else:
-        # Default: whole rest
+        # Default: whole rest for a completely empty measure
         rest_el = ET.SubElement(m_el, "note")
         ET.SubElement(rest_el, "rest", measure="yes")
         _sub(rest_el, "duration", str(_DURATION_TICKS["whole"]))
