@@ -20,6 +20,7 @@ export type Dynamic = "" | "pp" | "p" | "mp" | "mf" | "f" | "ff";
 
 export interface ToolState {
   duration:     NoteDuration;
+  dotted:       boolean;      // dotted modifier — 1.5× the base duration
   isRest:       boolean;
   noteName:     string;       // "C" | "D" | "E" | "F" | "G" | "A" | "B"
   accidental:   string;       // "" | "#" | "b"
@@ -30,6 +31,7 @@ export interface ToolState {
 
 export const DEFAULT_TOOL: ToolState = {
   duration:     "quarter",
+  dotted:       false,
   isRest:       false,
   noteName:     "C",
   accidental:   "",
@@ -493,11 +495,12 @@ export default function NoteEditorToolbar({ tool, onToolChange, timeSig, onTimeS
   }
 
   const pitchDisabled = tool.isRest;
+  const dotLabel      = tool.dotted ? "dotted " : "";
   const displayStr    = tool.isRest
-    ? `rest · ${tool.duration}`
+    ? `rest · ${dotLabel}${tool.duration}`
     : [
         buildPitch(tool),
-        tool.duration,
+        `${dotLabel}${tool.duration}`,
         tool.articulation || null,
         tool.dynamic       || null,
       ].filter(Boolean).join(" · ");
@@ -582,6 +585,30 @@ export default function NoteEditorToolbar({ tool, onToolChange, timeSig, onTimeS
                 <NoteIcon type={`${d.id}-rest`} size={20} />
               </button>
             ))}
+          </div>
+
+          {/* Dotted toggle */}
+          <div style={{ ...S.row, marginTop: 2 }}>
+            <span style={S.subLabel}>Modify</span>
+            <button
+              type="button"
+              title={tool.dotted ? "Remove dot (currently dotted)" : "Add dot (1.5× duration)"}
+              style={{
+                ...S.smallBtn(tool.dotted),
+                minWidth: 44,
+                fontFamily: "serif",
+                fontSize: 16,
+                letterSpacing: 1,
+              }}
+              onClick={() => onToolChange({ ...tool, dotted: !tool.dotted })}
+            >
+              {tool.dotted ? "• dot" : "· dot"}
+            </button>
+            {tool.dotted && (
+              <span style={{ fontSize: 10, color: "#7aa2f7", alignSelf: "center" }}>
+                1.5× duration active
+              </span>
+            )}
           </div>
 
         </div>

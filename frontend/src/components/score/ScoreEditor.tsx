@@ -30,6 +30,8 @@ import ScoreSettings, {
 
 const DURATION_SLOTS: Record<string, number> = {
   whole: 16, half: 8, quarter: 4, eighth: 2, "16th": 1,
+  // Dotted variants — 1.5× the base slot count
+  "dotted-whole": 24, "dotted-half": 12, "dotted-quarter": 6, "dotted-eighth": 3,
 };
 
 function timeSigSlots(ts: string): number {
@@ -47,6 +49,11 @@ function wouldOverflow(slot: number, duration: string, capacity: number): boolea
 function snapSlot(rawSlot: number, duration: string): number {
   const dur = DURATION_SLOTS[duration] ?? 4;
   return Math.floor(rawSlot / dur) * dur;
+}
+
+/** Combine base duration with optional dotted flag into the stored duration string. */
+function effectiveDur(tool: ToolState): string {
+  return tool.dotted ? `dotted-${tool.duration}` : tool.duration;
 }
 
 // ─── Pitch model ──────────────────────────────────────────────────────────────
@@ -162,37 +169,45 @@ interface NHProps {
 }
 
 function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, beamed = false }: NHProps) {
+  const isDotted = duration.startsWith("dotted-");
+  const baseDur  = isDotted ? duration.slice(7) : duration; // "dotted-quarter" → "quarter"
   const rx     = ROW_H * 0.68;
   const ry     = ROW_H * 0.40;
-  const filled = duration !== "whole" && duration !== "half";
+  const filled = baseDur !== "whole" && baseDur !== "half";
   const stemUp = dir === "up";
   const stemX  = stemUp ? cx + rx - 1 : cx - rx + 1;
   const stemEnd = stemUp ? cy - STEM_LEN : cy + STEM_LEN;
   const s = selected ? SEL_BLUE : NOTE_BLACK;
+
+  // Augmentation dot: small filled circle to the upper-right of the notehead
+  const dotEl = isDotted
+    ? <circle cx={cx + rx + 5} cy={cy - ry * 0.35} r={ROW_H * 0.12}
+        fill={s} style={{ pointerEvents: "none" }} />
+    : null;
 
   if (isRest) {
     const rw  = Math.min(slots * slotW - 6, 20);
     const ry0 = REST_LINE_Y;
     return (
       <g>
-        {duration === "whole" && (
+        {baseDur === "whole" && (
           <rect x={cx - rw / 2} y={ry0} width={rw} height={ROW_H * 0.5} fill={s} />
         )}
-        {duration === "half" && (
+        {baseDur === "half" && (
           <rect x={cx - rw / 2} y={ry0 - ROW_H * 0.5} width={rw} height={ROW_H * 0.5} fill={s} />
         )}
-        {duration === "quarter" && (
+        {baseDur === "quarter" && (
           <path d={`M${cx},${cy - ROW_H} l2,3 l-3,3 l3,3 l-2,3`}
             stroke={s} strokeWidth={1.8} fill="none" strokeLinecap="round" />
         )}
-        {duration === "eighth" && (
+        {baseDur === "eighth" && (
           <>
             <circle cx={cx + 2} cy={cy + 2} r={2.2} fill={s} />
             <path d={`M${cx + 2},${cy} Q${cx - 3},${cy - 5} ${cx + 3},${cy - 11}`}
               stroke={s} strokeWidth={1.4} fill="none" strokeLinecap="round" />
           </>
         )}
-        {duration === "16th" && (
+        {baseDur === "16th" && (
           <>
             <circle cx={cx + 2} cy={cy + 2} r={2} fill={s} />
             <path d={`M${cx + 2},${cy} Q${cx - 2},${cy - 4} ${cx + 2},${cy - 9}`}
@@ -202,6 +217,7 @@ function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, 
               stroke={s} strokeWidth={1.2} fill="none" strokeLinecap="round" />
           </>
         )}
+        {dotEl}
         {selected && (
           <rect x={cx - rw / 2 - 3} y={ry0 - 5} width={rw + 6} height={ROW_H + 6}
             fill="none" stroke={SEL_BLUE} strokeWidth={1.3} rx={2} />
@@ -223,22 +239,23 @@ function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, 
         ? <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill={s} />
         : <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill="white" stroke={s} strokeWidth={1.7} />
       }
+      {dotEl}
       {selected && (
         <rect x={cx - rx - 3} y={cy - ry - 3} width={(rx + 3) * 2} height={(ry + 3) * 2}
           fill="none" stroke={SEL_BLUE} strokeWidth={1.5} rx={3} />
       )}
-      {duration !== "whole" && (
+      {baseDur !== "whole" && (
         <line x1={stemX} y1={cy} x2={stemX} y2={stemEnd}
           stroke={NOTE_BLACK} strokeWidth={1.2} />
       )}
-      {!beamed && duration === "eighth" && (
+      {!beamed && baseDur === "eighth" && (
         <path
           d={stemUp
             ? `M${stemX},${stemEnd} C${stemX+9},${stemEnd+5} ${stemX+8},${stemEnd+12} ${stemX+1},${stemEnd+16}`
             : `M${stemX},${stemEnd} C${stemX+9},${stemEnd-5} ${stemX+8},${stemEnd-12} ${stemX+1},${stemEnd-16}`}
           stroke={NOTE_BLACK} strokeWidth={1.3} fill="none" />
       )}
-      {!beamed && duration === "16th" && (
+      {!beamed && baseDur === "16th" && (
         <>
           <path
             d={stemUp
@@ -436,14 +453,14 @@ function MeasurePanel({
     ? noteAt(internalHover.slot, internalHover.row) !== -1
     : false;
   const hoverOverflows = internalHover
-    ? wouldOverflow(internalHover.slot, tool.duration, totalSlots)
+    ? wouldOverflow(internalHover.slot, effectiveDur(tool), totalSlots)
     : false;
 
   function onMouseMove(e: React.MouseEvent<SVGSVGElement>) {
     const c = getCell(e);
     if (!c) { onHoverChange(null, null); return; }
     // Snap hover ghost to duration grid so the full beat area previews correctly
-    onHoverChange(snapSlot(c.slot, tool.duration), c.row);
+    onHoverChange(snapSlot(c.slot, effectiveDur(tool)), c.row);
   }
   function onMouseLeave() { onHoverChange(null, null); }
 
@@ -454,8 +471,9 @@ function MeasurePanel({
     const ni = noteAt(c.slot, c.row);
     if (ni !== -1) { onNoteClick(ni); return; }
     // Snap to duration grid for placement so the full beat area is clickable
-    const slot = snapSlot(c.slot, tool.duration);
-    if (wouldOverflow(slot, tool.duration, totalSlots)) return;
+    const eff  = effectiveDur(tool);
+    const slot = snapSlot(c.slot, eff);
+    if (wouldOverflow(slot, eff, totalSlots)) return;
     onPlace(slot, c.row);
   }
 
@@ -773,14 +791,15 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
     const rowDef = D_ROWS[row];
     if (!rowDef) return;
     // Enforce measure capacity — reject if note would overflow
-    if (wouldOverflow(slot, tool.duration, totalSlots)) return;
+    const eff = effectiveDur(tool);
+    if (wouldOverflow(slot, eff, totalSlots)) return;
     const pitch = tool.isRest ? rowDef.pitch : withAcc(rowDef.pitch, tool.accidental);
     const note: ChartNote = {
       id: -(Date.now()), measure_id: mid,
-      position: slot, pitch, duration: tool.duration,
+      position: slot, pitch, duration: eff,
       is_rest: tool.isRest, velocity: 80,
       start_time_s: null, end_time_s: null,
-      notation_position: slot, notation_duration: tool.duration,
+      notation_position: slot, notation_duration: eff,
     };
     changeNotes(mid, [...(localNotes[mid] ?? []), note]);
     setSelMid(null); setSelNi(null);

@@ -44,6 +44,11 @@ _DURATION_TICKS: dict[str, int] = {
     "quarter": 4,
     "eighth": 2,
     "16th": 1,
+    # Dotted variants — 1.5× the base tick count
+    "dotted-whole": 24,
+    "dotted-half": 12,
+    "dotted-quarter": 6,
+    "dotted-eighth": 3,
 }
 
 # MusicXML <type> values (same as duration names, mostly)
@@ -53,6 +58,11 @@ _DURATION_TYPE: dict[str, str] = {
     "quarter": "quarter",
     "eighth": "eighth",
     "16th": "16th",
+    # Dotted variants map to the base <type> (the <dot/> element signals the dot)
+    "dotted-whole": "whole",
+    "dotted-half": "half",
+    "dotted-quarter": "quarter",
+    "dotted-eighth": "eighth",
 }
 
 # Durations eligible for beaming
@@ -186,8 +196,14 @@ def _measure_capacity(time_sig: str) -> int:
     return (n * 16) // d
 
 
-# Durations in descending order of length — used for clamping
-_DURATIONS_DESC = ("whole", "half", "quarter", "eighth", "16th")
+# Durations in descending order of length — used for clamping (dotted variants interleaved)
+_DURATIONS_DESC = (
+    "dotted-whole", "whole",
+    "dotted-half", "half",
+    "dotted-quarter", "quarter",
+    "dotted-eighth", "eighth",
+    "16th",
+)
 
 
 def _largest_fitting_duration(slots: int) -> str | None:
@@ -256,6 +272,9 @@ def _build_note_element(
 
     _sub(el, "duration", str(ticks))
     _sub(el, "type", note_type)
+    # Dotted durations require a <dot/> child element in MusicXML
+    if effective_duration.startswith("dotted-"):
+        ET.SubElement(el, "dot")
 
     # Beam elements — only for beamable notes in a group
     if beam_role != "none" and effective_duration in _BEAMABLE:
