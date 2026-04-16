@@ -245,64 +245,75 @@ function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, 
   const s = selected ? SEL_BLUE : NOTE_BLACK;
 
   if (isRest) {
-    const rw  = Math.min(slots * slotW - 6, 20);
-    const ry0 = REST_LINE_Y;
-    // Dot position for rests is anchored to the rest symbol, not the notehead cy.
-    // whole-rest hangs below ry0 → dot sits on the right at the block's vertical midpoint
-    // half-rest sits above ry0  → same logic, block midpoint
-    // quarter/eighth/16th are drawn around cy → dot anchored to each symbol's rightmost point
-    const dotR = ROW_H * 0.12;
-    const dotEl = isDotted ? (() => {
-      switch (baseDur) {
-        case "whole":
-          return <circle cx={cx + rw / 2 + 4} cy={ry0 + ROW_H * 0.25}  r={dotR} fill={s} style={{ pointerEvents: "none" }} />;
-        case "half":
-          return <circle cx={cx + rw / 2 + 4} cy={ry0 - ROW_H * 0.25}  r={dotR} fill={s} style={{ pointerEvents: "none" }} />;
-        case "quarter":
-          // zigzag spans cx ± ~3px; dot vertically centred at cy
-          return <circle cx={cx + 8}            cy={cy}                  r={dotR} fill={s} style={{ pointerEvents: "none" }} />;
-        case "eighth":
-          // hook circle at cx+2, cy+2; dot in the space to its right, slightly above
-          return <circle cx={cx + 9}            cy={cy - 3}              r={dotR} fill={s} style={{ pointerEvents: "none" }} />;
-        case "16th":
-          // two hook circles; dot between them horizontally, vertically at midpoint
-          return <circle cx={cx + 10}           cy={cy - 4}              r={dotR} fill={s} style={{ pointerEvents: "none" }} />;
-        default:
-          return null;
-      }
-    })() : null;
+    // ── Bravura SMuFL rest glyphs ─────────────────────────────────────────
+    // Font metrics (in 1000-UPM, sp = 250 units = 1 staff space):
+    //   whole  U+E4E3: yMin=1.168sp yMax=1.628sp  — hangs below LINE_YS[1] (D5 line)
+    //   half   U+E4E4: yMin=1.592sp yMax=2.056sp  — sits on  LINE_YS[2] (B4 line)
+    //   quarter U+E4E5: yMin=0.400sp yMax=2.792sp — tall glyph, baseline at LINE_YS[4] (E4)
+    //   eighth  U+E4E6: yMin=0.796sp yMax=2.156sp — baseline at LINE_YS[4]
+    //   16th    U+E4E7: yMin=0.000sp yMax=2.172sp — baseline at LINE_YS[4]
+    // staffSpace = ROW_H * 2 (two row-heights per staff space)
+    // fontSize = ROW_H * 4  (= staffH, 1em = 4 staff spaces)
+    const staffSpace = ROW_H * 2;
+    const restFz     = ROW_H * 4;  // = staffH
+
+    // Bravura rest glyph codepoints
+    const REST_GLYPHS: Record<string, string> = {
+      whole:   "\uE4E3",
+      half:    "\uE4E4",
+      quarter: "\uE4E5",
+      eighth:  "\uE4E6",
+      "16th":  "\uE4E7",
+    };
+    const glyph = REST_GLYPHS[baseDur] ?? "\uE4E5";
+
+    // Baseline y: Bravura rests use "bottom of staff" as y=0 (upward = positive)
+    // In our SVG y increases downward, so: svgY = STAFF_BOT - (baseline_sp * staffSpace)
+    // whole: hang from 2nd line (LINE_YS[1]) — place baseline so yMax lands on that line
+    //   baseline_sp = 2.0 sp above bottom line → svgY = STAFF_BOT - 2 * staffSpace = LINE_YS[2]
+    //   but the glyph hangs with yMin=1.168sp so nudge: baseline = LINE_YS[1] + 0.4*staffSpace
+    // half: sit on 3rd line (LINE_YS[2]) — yMin=1.592sp means glyph top is 2.056sp
+    //   baseline at STAFF_BOT - 1.592sp * staffSpace ≈ LINE_YS[3]
+    // quarter/eighth/16th: glyph covers ~2.0–2.8sp, center vertically in staff
+    //   place baseline at LINE_YS[4] (bottom staff line) + small offset
+    const restBaselineY =
+      baseDur === "whole"   ? LINE_YS[1]! + Math.round(0.40 * staffSpace)
+    : baseDur === "half"    ? LINE_YS[3]! - Math.round(0.08 * staffSpace)
+    :                         LINE_YS[4]! + Math.round(0.40 * staffSpace);
+
+    // Augmentation dot: Bravura U+E1E7, sized at ~0.32sp wide, centered at 1.6sp above bottom
+    // Place it just to the right of the glyph, in the first space above the middle line
+    const dotFz  = Math.round(restFz * 0.55);
+    const dotX   = cx + Math.round(0.55 * staffSpace);
+    const dotY   = LINE_YS[2]! + Math.round(0.50 * staffSpace);
+
+    // Selection box: approximate glyph bounds in px for the hit rect
+    const selH   = Math.round(2.4 * staffSpace);
+    const selY   = restBaselineY - selH;
+    const selW   = Math.round(0.95 * staffSpace);
+
     return (
-      <g>
-        {baseDur === "whole" && (
-          <rect x={cx - rw / 2} y={ry0} width={rw} height={ROW_H * 0.5} fill={s} />
+      <g style={{ pointerEvents: "none" }}>
+        <text
+          x={cx} y={restBaselineY}
+          fontSize={restFz} fill={s}
+          fontFamily="Bravura, serif"
+          textAnchor="middle"
+          style={{ userSelect: "none" }}>
+          {glyph}
+        </text>
+        {isDotted && (
+          <text
+            x={dotX} y={dotY}
+            fontSize={dotFz} fill={s}
+            fontFamily="Bravura, serif"
+            textAnchor="middle"
+            style={{ userSelect: "none" }}>
+            {"\uE1E7"}
+          </text>
         )}
-        {baseDur === "half" && (
-          <rect x={cx - rw / 2} y={ry0 - ROW_H * 0.5} width={rw} height={ROW_H * 0.5} fill={s} />
-        )}
-        {baseDur === "quarter" && (
-          <path d={`M${cx},${cy - ROW_H} l2,3 l-3,3 l3,3 l-2,3`}
-            stroke={s} strokeWidth={1.8} fill="none" strokeLinecap="round" />
-        )}
-        {baseDur === "eighth" && (
-          <>
-            <circle cx={cx + 2} cy={cy + 2} r={2.2} fill={s} />
-            <path d={`M${cx + 2},${cy} Q${cx - 3},${cy - 5} ${cx + 3},${cy - 11}`}
-              stroke={s} strokeWidth={1.4} fill="none" strokeLinecap="round" />
-          </>
-        )}
-        {baseDur === "16th" && (
-          <>
-            <circle cx={cx + 2} cy={cy + 2} r={2} fill={s} />
-            <path d={`M${cx + 2},${cy} Q${cx - 2},${cy - 4} ${cx + 2},${cy - 9}`}
-              stroke={s} strokeWidth={1.2} fill="none" strokeLinecap="round" />
-            <circle cx={cx + 3} cy={cy - 6} r={2} fill={s} />
-            <path d={`M${cx + 3},${cy - 8} Q${cx - 1},${cy - 12} ${cx + 3},${cy - 16}`}
-              stroke={s} strokeWidth={1.2} fill="none" strokeLinecap="round" />
-          </>
-        )}
-        {dotEl}
         {selected && (
-          <rect x={cx - rw / 2 - 3} y={ry0 - 5} width={rw + 6} height={ROW_H + 6}
+          <rect x={cx - selW / 2 - 3} y={selY - 2} width={selW + 6} height={selH + 4}
             fill="none" stroke={SEL_BLUE} strokeWidth={1.3} rx={2} />
         )}
       </g>

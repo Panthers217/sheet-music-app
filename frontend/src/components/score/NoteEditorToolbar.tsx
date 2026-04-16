@@ -111,61 +111,57 @@ function NoteIcon({ type, size = 22 }: { type: string; size?: number }) {
         </svg>
       );
 
-    // ── Rests ────────────────────────────────────────────────────────────────
+    // ── Rests — Bravura SMuFL glyphs ─────────────────────────────────────────
+    // Each glyph is rendered in a small SVG with a fixed viewBox that maps
+    // 1 staff space = 8px (so 4sp staff = 32px tall).
+    // Baseline is placed so the glyph is vertically centred in the icon area.
     case "whole-rest":
-      // Thick rectangle hanging below a ledger line
+      // yMin=1.168sp yMax=1.628sp — hangs below a line; centre in 22px box
       return (
-        <svg width={s} height={s} viewBox="0 0 24 22" aria-hidden>
-          <line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="1" />
-          <rect x="6" y="12" width="12" height="6" fill="currentColor" />
+        <svg width={s} height={s} viewBox="0 0 24 22" overflow="visible" aria-hidden>
+          <text x="12" y="15" fontSize="32" textAnchor="middle"
+            fontFamily="Bravura, serif" fill="currentColor"
+            style={{ userSelect: "none" }}>{"\uE4E3"}</text>
         </svg>
       );
 
     case "half-rest":
-      // Thick rectangle sitting on a ledger line
+      // yMin=1.592sp yMax=2.056sp — sits on a line
       return (
-        <svg width={s} height={s} viewBox="0 0 24 22" aria-hidden>
-          <line x1="3" y1="15" x2="21" y2="15" stroke="currentColor" strokeWidth="1" />
-          <rect x="6" y="9" width="12" height="6" fill="currentColor" />
+        <svg width={s} height={s} viewBox="0 0 24 22" overflow="visible" aria-hidden>
+          <text x="12" y="18" fontSize="32" textAnchor="middle"
+            fontFamily="Bravura, serif" fill="currentColor"
+            style={{ userSelect: "none" }}>{"\uE4E4"}</text>
         </svg>
       );
 
     case "quarter-rest":
+      // yMin=0.4sp yMax=2.792sp — tall glyph
       return (
-        <svg width={s} height={sh} viewBox="0 0 22 30" aria-hidden>
-          {/* Classic zigzag quarter rest shape */}
-          <path
-            d="M14,2 L8,10 L14,14 L6,22 L11,27 L7,30"
-            stroke="currentColor"
-            strokeWidth="2"
-            fill="none"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
+        <svg width={s} height={sh} viewBox="0 0 24 30" overflow="visible" aria-hidden>
+          <text x="12" y="28" fontSize="32" textAnchor="middle"
+            fontFamily="Bravura, serif" fill="currentColor"
+            style={{ userSelect: "none" }}>{"\uE4E5"}</text>
         </svg>
       );
 
     case "eighth-rest":
+      // yMin=0.796sp yMax=2.156sp
       return (
-        <svg width={s} height={sh} viewBox="0 0 24 30" aria-hidden>
-          <circle cx="14" cy="22" r="3" fill="currentColor" />
-          <path
-            d="M14,19 Q8,13 15,7"
-            stroke="currentColor"
-            strokeWidth="2"
-            fill="none"
-            strokeLinecap="round"
-          />
+        <svg width={s} height={sh} viewBox="0 0 24 30" overflow="visible" aria-hidden>
+          <text x="12" y="28" fontSize="32" textAnchor="middle"
+            fontFamily="Bravura, serif" fill="currentColor"
+            style={{ userSelect: "none" }}>{"\uE4E6"}</text>
         </svg>
       );
 
     case "16th-rest":
+      // yMin=0sp yMax=2.172sp
       return (
-        <svg width={s} height={sh} viewBox="0 0 24 30" aria-hidden>
-          <circle cx="14" cy="24" r="2.5" fill="currentColor" />
-          <path d="M14,21 Q8,16 15,11" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" />
-          <circle cx="16" cy="15" r="2.5" fill="currentColor" />
-          <path d="M16,12 Q10,7 17,2" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" />
+        <svg width={s} height={sh} viewBox="0 0 24 30" overflow="visible" aria-hidden>
+          <text x="12" y="28" fontSize="32" textAnchor="middle"
+            fontFamily="Bravura, serif" fill="currentColor"
+            style={{ userSelect: "none" }}>{"\uE4E7"}</text>
         </svg>
       );
 
