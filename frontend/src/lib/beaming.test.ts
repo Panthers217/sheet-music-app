@@ -210,6 +210,72 @@ describe("computeBeaming — 6/8", () => {
   });
 });
 
+// ─── computeBeaming — dotted-eighth + 16th combinations ─────────────────────
+
+describe("computeBeaming — dotted-eighth + 16th", () => {
+  // In 4/4 a dotted-eighth (3 slots) + 16th (1 slot) = 4 slots = 1 beat — the most
+  // common syncopated beaming pattern in common-practice notation.
+
+  test("dotted-eighth then 16th → beamed together", () => {
+    // slot 0 dotted-eighth (3 slots) + slot 3 16th (1 slot) = 4 slots total
+    const notes = [note(0, "dotted-eighth"), note(3, "16th")];
+    const result = computeBeaming(notes, "4/4");
+    expect(result[0]!.role).toBe("begin");
+    expect(result[1]!.role).toBe("end");
+    expect(result[0]!.groupId).toBe(result[1]!.groupId);
+  });
+
+  test("16th then dotted-eighth → beamed together", () => {
+    // slot 0 16th (1 slot) + slot 1 dotted-eighth (3 slots)
+    const notes = [note(0, "16th"), note(1, "dotted-eighth")];
+    const result = computeBeaming(notes, "4/4");
+    expect(result[0]!.role).toBe("begin");
+    expect(result[1]!.role).toBe("end");
+    expect(result[0]!.groupId).toBe(result[1]!.groupId);
+  });
+
+  test("isolated dotted-eighth → not beamed", () => {
+    const result = computeBeaming([note(0, "dotted-eighth")], "4/4");
+    expect(result[0]!.role).toBe("none");
+    expect(result[0]!.groupId).toBe(-1);
+  });
+
+  test("dotted-eighth + 16th + 16th + dotted-eighth → one group across 4/4 half-measure", () => {
+    // All four notes are adjacent within window [0,8) — no gaps, so one beam group.
+    // d8(0-2) + 16(3) + 16(4) + d8(5-7) = 8 slots = beats 1+2 of 4/4.
+    const notes = [
+      note(0, "dotted-eighth"),
+      note(3, "16th"),
+      note(4, "16th"),
+      note(5, "dotted-eighth"),
+    ];
+    const result = computeBeaming(notes, "4/4");
+    expect(result[0]!.role).toBe("begin");
+    expect(result[1]!.role).toBe("continue");
+    expect(result[2]!.role).toBe("continue");
+    expect(result[3]!.role).toBe("end");
+    // All share the same groupId
+    const gid = result[0]!.groupId;
+    result.forEach((r) => expect(r.groupId).toBe(gid));
+  });
+
+  test("gap between dotted-eighth and 16th → not beamed", () => {
+    // d8 at slot 0 ends at slot 3, but 16th placed at slot 4 (gap)
+    const notes = [note(0, "dotted-eighth"), note(4, "16th")];
+    const result = computeBeaming(notes, "4/4");
+    expect(result[0]!.role).toBe("none");
+    expect(result[1]!.role).toBe("none");
+  });
+
+  test("dotted-eighth + 16th in 6/8 dotted-quarter window → beamed", () => {
+    // In 6/8, window [0,6): d8 (0-2) + 16 (3) = 4 slots, still within the window
+    const notes = [note(0, "dotted-eighth"), note(3, "16th")];
+    const result = computeBeaming(notes, "6/8");
+    expect(result[0]!.role).toBe("begin");
+    expect(result[1]!.role).toBe("end");
+  });
+});
+
 // ─── Edge cases ───────────────────────────────────────────────────────────────
 
 describe("computeBeaming — edge cases", () => {

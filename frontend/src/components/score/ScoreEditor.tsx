@@ -736,21 +736,62 @@ function MeasurePanel({
           const x2     = sorted[sorted.length - 1]!.stemX;
           const avgEnd = sorted.reduce((s, n) => s + n.stemEnd, 0) / sorted.length;
           const beamH  = ROW_H * 0.38;
-          // Centre beam rect on average stem-tip Y
+          // Centre primary beam rect on average stem-tip Y
           const beamY  = avgEnd - beamH / 2;
           const bx     = Math.min(x1, x2);
           const bw     = Math.max(1, Math.abs(x2 - x1));
-          // Draw second beam level only when every note in group is a 16th
-          const all16  = sorted.every((n) => n.dur === "16th");
           const gap2   = beamH + 2;
           const beam2Y = dir === "up" ? beamY + gap2 : beamY - gap2;
+          // Stub width for isolated 16th notes (no 16th neighbour)
+          const stubW  = ROW_H * 0.65;
+          // Helper: strip "dotted-" prefix to get base duration
+          const base   = (d: string) => d.startsWith("dotted-") ? d.slice(7) : d;
+          const is16   = (d: string) => base(d) === "16th";
+
+          // ── Secondary beam segments ──────────────────────────────────────
+          // Rule 1: full segment between every consecutive 16th–16th pair.
+          // Rule 2: stub on a 16th that has no 16th neighbour on either side
+          //         (the classic dotted-eighth + 16th pattern).
+          //         Stub extends toward its nearest neighbour.
+          const secondarySegs: { x: number; w: number }[] = [];
+          const hasLeft  = new Set<number>(); // sorted-index already has a secondary beam to its left
+          const hasRight = new Set<number>(); // sorted-index already has a secondary beam to its right
+
+          for (let k = 0; k < sorted.length - 1; k++) {
+            const a = sorted[k]!;
+            const b = sorted[k + 1]!;
+            if (is16(a.dur) && is16(b.dur)) {
+              const sx = Math.min(a.stemX, b.stemX);
+              const sw = Math.abs(b.stemX - a.stemX);
+              secondarySegs.push({ x: sx, w: sw });
+              hasRight.add(k);
+              hasLeft.add(k + 1);
+            }
+          }
+
+          // Stubs for isolated 16ths (no full secondary on either side)
+          for (let k = 0; k < sorted.length; k++) {
+            const n = sorted[k]!;
+            if (!is16(n.dur)) continue;
+            if (hasLeft.has(k) || hasRight.has(k)) continue; // already connected
+            // Draw stub toward the nearest neighbour
+            if (k > 0) {
+              // Stub going left (toward sorted[k-1])
+              secondarySegs.push({ x: n.stemX - stubW, w: stubW });
+            } else if (k < sorted.length - 1) {
+              // Stub going right (toward sorted[k+1])
+              secondarySegs.push({ x: n.stemX, w: stubW });
+            }
+          }
 
           return (
             <g key={`beam-${gid}`} style={{ pointerEvents: "none" }}>
+              {/* Primary beam */}
               <rect x={bx} y={beamY} width={bw} height={beamH} fill={NOTE_BLACK} />
-              {all16 && (
-                <rect x={bx} y={beam2Y} width={bw} height={beamH} fill={NOTE_BLACK} />
-              )}
+              {/* Secondary beam segments (full or stub) */}
+              {secondarySegs.map((seg, si) => (
+                <rect key={`b2-${si}`} x={seg.x} y={beam2Y} width={seg.w} height={beamH} fill={NOTE_BLACK} />
+              ))}
             </g>
           );
         })}

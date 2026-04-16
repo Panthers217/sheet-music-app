@@ -35,7 +35,8 @@ export interface BeamResult {
 
 // ─── Internal constants ───────────────────────────────────────────────────────
 
-const BEAMABLE = new Set(["eighth", "16th"]);
+// dotted-eighth beams with an adjacent 16th (the classic 3+1 = one beat pattern)
+const BEAMABLE = new Set(["eighth", "16th", "dotted-eighth"]);
 
 /** 16th-note grid slots per duration value. */
 const SLOTS: Record<string, number> = {
@@ -44,6 +45,8 @@ const SLOTS: Record<string, number> = {
   quarter: 4,
   eighth: 2,
   "16th": 1,
+  // Dotted beamable values
+  "dotted-eighth": 3,  // 3 × 16th slots — beams with a following/preceding 16th
 };
 
 // ─── Beat-window calculation ──────────────────────────────────────────────────
