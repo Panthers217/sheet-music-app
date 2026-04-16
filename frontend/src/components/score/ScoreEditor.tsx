@@ -61,16 +61,29 @@ function effectiveDur(tool: ToolState): string {
 type AutoRest = { slot: number; duration: string };
 
 /**
+ * A "placeholder" whole-measure rest is a rest note whose duration fills the
+ * entire measure (inserted automatically by the backend for empty measures).
+ * We exclude these from occupancy so auto-fill always works correctly.
+ */
+function isPlaceholderRest(note: ChartNote, totalSlots: number): boolean {
+  if (!note.is_rest) return false;
+  const dur = note.notation_duration ?? note.duration;
+  return (DURATION_SLOTS[dur] ?? 4) >= totalSlots;
+}
+
+/**
  * Return fill rests for every unoccupied slot in a measure.
  * Uses a greedy largest-first algorithm so the fewest rests are drawn.
- * Returns [] when notes is empty (the centered whole-measure rest is shown instead).
+ * Placeholder whole-measure rests are ignored so auto-fill works on
+ * both empty measures and measures that already have real content.
  */
 function computeAutoRests(notes: ChartNote[], totalSlots: number): AutoRest[] {
-  if (notes.length === 0) return [];
+  // Filter out placeholder whole-measure rests — they don’t occupy real beats
+  const realNotes = notes.filter((n) => !isPlaceholderRest(n, totalSlots));
 
-  // Mark occupied slots
+  // Mark occupied slots from real notes only
   const occ = new Uint8Array(totalSlots);
-  for (const note of notes) {
+  for (const note of realNotes) {
     const s = note.notation_position ?? note.position;
     const d = DURATION_SLOTS[note.notation_duration ?? note.duration] ?? 4;
     for (let i = s; i < Math.min(s + d, totalSlots); i++) occ[i] = 1;
@@ -230,15 +243,33 @@ function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, 
   const stemEnd = stemUp ? cy - STEM_LEN : cy + STEM_LEN;
   const s = selected ? SEL_BLUE : NOTE_BLACK;
 
-  // Augmentation dot: small filled circle to the upper-right of the notehead
-  const dotEl = isDotted
-    ? <circle cx={cx + rx + 5} cy={cy - ry * 0.35} r={ROW_H * 0.12}
-        fill={s} style={{ pointerEvents: "none" }} />
-    : null;
-
   if (isRest) {
     const rw  = Math.min(slots * slotW - 6, 20);
     const ry0 = REST_LINE_Y;
+    // Dot position for rests is anchored to the rest symbol, not the notehead cy.
+    // whole-rest hangs below ry0 → dot sits on the right at the block's vertical midpoint
+    // half-rest sits above ry0  → same logic, block midpoint
+    // quarter/eighth/16th are drawn around cy → dot anchored to each symbol's rightmost point
+    const dotR = ROW_H * 0.12;
+    const dotEl = isDotted ? (() => {
+      switch (baseDur) {
+        case "whole":
+          return <circle cx={cx + rw / 2 + 4} cy={ry0 + ROW_H * 0.25}  r={dotR} fill={s} style={{ pointerEvents: "none" }} />;
+        case "half":
+          return <circle cx={cx + rw / 2 + 4} cy={ry0 - ROW_H * 0.25}  r={dotR} fill={s} style={{ pointerEvents: "none" }} />;
+        case "quarter":
+          // zigzag spans cx ± ~3px; dot vertically centred at cy
+          return <circle cx={cx + 8}            cy={cy}                  r={dotR} fill={s} style={{ pointerEvents: "none" }} />;
+        case "eighth":
+          // hook circle at cx+2, cy+2; dot in the space to its right, slightly above
+          return <circle cx={cx + 9}            cy={cy - 3}              r={dotR} fill={s} style={{ pointerEvents: "none" }} />;
+        case "16th":
+          // two hook circles; dot between them horizontally, vertically at midpoint
+          return <circle cx={cx + 10}           cy={cy - 4}              r={dotR} fill={s} style={{ pointerEvents: "none" }} />;
+        default:
+          return null;
+      }
+    })() : null;
     return (
       <g>
         {baseDur === "whole" && (
@@ -290,7 +321,11 @@ function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, 
         ? <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill={s} />
         : <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill="white" stroke={s} strokeWidth={1.7} />
       }
-      {dotEl}
+      {/* Augmentation dot: to the upper-right of the notehead */}
+      {isDotted && (
+        <circle cx={cx + rx + 5} cy={cy - ry * 0.35} r={ROW_H * 0.12}
+          fill={s} style={{ pointerEvents: "none" }} />
+      )}
       {selected && (
         <rect x={cx - rx - 3} y={cy - ry - 3} width={(rx + 3) * 2} height={(ry + 3) * 2}
           fill="none" stroke={SEL_BLUE} strokeWidth={1.5} rx={3} />
@@ -528,11 +563,13 @@ function MeasurePanel({
     onPlace(slot, c.row);
   }
 
-  const isEmpty    = sm.notes.length === 0;
-  // Compute fill rests for all unoccupied slots (empty when nothing placed yet)
+  // A measure is "empty" only when there are no real (non-placeholder) notes.
+  // Placeholder whole-measure rests don't count — auto-fill handles those slots.
+  const hasRealNotes = sm.notes.some((n) => !isPlaceholderRest(n, totalSlots));
+  const isEmpty      = !hasRealNotes;
+  // Compute fill rests for all unoccupied slots (works for empty measures too)
   const autoRests  = computeAutoRests(sm.notes, totalSlots);
-  // Y-centre for auto-rest symbols: B4 (middle staff line) for quarter/8th/16th;
-  // NoteHead uses REST_LINE_Y for whole/half regardless of cy.
+  // Y-centre for auto-rest symbols: B4 (middle staff line)
   const autoRestCy = B4_DROW * ROW_H + ROW_H / 2;
 
   return (
@@ -599,21 +636,23 @@ function MeasurePanel({
           </text>
         )}
 
-        {/* ── Whole-measure rest — centered in measure ─────── */}
-        {isEmpty && <WholeMeasureRest cx={measureW / 2} />}
-
         {/* ── Auto-fill rests (non-interactive, faded) ─────── */}
         {autoRests.map((ar) => {
           const durSl = DURATION_SLOTS[ar.duration] ?? 4;
-          const cx    = ar.slot * slotW + slotW / 2;
+          // Center whole-measure spanning rests (same as the old WholeMeasureRest)
+          const cx    = durSl >= totalSlots
+            ? measureW / 2
+            : ar.slot * slotW + slotW / 2;
           return (
             <g key={`ar${ar.slot}-${ar.duration}`}
               style={{ pointerEvents: "none", opacity: 0.55 }}>
-              {/* Subtle blue tint band so fill-rests are clearly distinct */}
-              <rect
-                x={ar.slot * slotW + 1} y={STAFF_TOP}
-                width={durSl * slotW - 2} height={STAFF_BOT - STAFF_TOP + ROW_H}
-                fill="rgba(99,179,237,0.10)" />
+              {/* Subtle blue tint band — omit for whole-measure spans */}
+              {durSl < totalSlots && (
+                <rect
+                  x={ar.slot * slotW + 1} y={STAFF_TOP}
+                  width={durSl * slotW - 2} height={STAFF_BOT - STAFF_TOP + ROW_H}
+                  fill="rgba(99,179,237,0.10)" />
+              )}
               <NoteHead
                 cx={cx} cy={autoRestCy}
                 duration={ar.duration}
@@ -881,7 +920,9 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
       start_time_s: null, end_time_s: null,
       notation_position: slot, notation_duration: eff,
     };
-    changeNotes(mid, [...(localNotes[mid] ?? []), note]);
+    // Remove any placeholder whole-measure rest before adding the new note
+    const existing = (localNotes[mid] ?? []).filter((n) => !isPlaceholderRest(n, totalSlots));
+    changeNotes(mid, [...existing, note]);
     setSelMid(null); setSelNi(null);
   }
 
