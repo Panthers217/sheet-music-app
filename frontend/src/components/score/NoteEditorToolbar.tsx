@@ -43,8 +43,10 @@ export function buildPitch(tool: ToolState): string {
 }
 
 interface Props {
-  tool:         ToolState;
-  onToolChange: (t: ToolState) => void;
+  tool:           ToolState;
+  onToolChange:   (t: ToolState) => void;
+  timeSig:        string;
+  onTimeSigChange: (ts: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,6 +247,15 @@ const DYNAMICS: { id: Dynamic; label: string }[] = [
   { id: "mf", label: "mf" },
   { id: "f",  label: "f"  },
   { id: "ff", label: "ff" },
+];
+
+const TIME_SIGNATURES: { value: string; top: string; bot: string }[] = [
+  { value: "2/4",  top: "2",  bot: "4" },
+  { value: "3/4",  top: "3",  bot: "4" },
+  { value: "4/4",  top: "4",  bot: "4" },
+  { value: "6/8",  top: "6",  bot: "8" },
+  { value: "9/8",  top: "9",  bot: "8" },
+  { value: "12/8", top: "12", bot: "8" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -468,8 +479,9 @@ function Section({
 // Component
 // ---------------------------------------------------------------------------
 
-export default function NoteEditorToolbar({ tool, onToolChange }: Props) {
+export default function NoteEditorToolbar({ tool, onToolChange, timeSig, onTimeSigChange }: Props) {
   const [open, setOpen] = useState<Record<string, boolean>>({
+    timeSig:      true,
     noteRest:     true,
     pitch:        true,
     articulation: false,
@@ -499,6 +511,44 @@ export default function NoteEditorToolbar({ tool, onToolChange }: Props) {
         <div style={{ flex: 1, height: 1, background: "#2a2d4a" }} />
         <span style={S.activeTool}>{displayStr}</span>
       </div>
+
+      {/* ── Time Signature ─────────────────────────────────────────── */}
+      <Section
+        id="timeSig"
+        label="Time Signature"
+        open={!!open.timeSig}
+        onToggle={toggle}
+        badge={<span style={S.badge("#7dcfff")}>{timeSig}</span>}
+      >
+        <div style={S.row}>
+          {TIME_SIGNATURES.map((ts) => {
+            const active = timeSig === ts.value;
+            return (
+              <button
+                key={ts.value}
+                type="button"
+                title={ts.value}
+                style={{
+                  ...S.smallBtn(active),
+                  minWidth: 34,
+                  display: "flex",
+                  flexDirection: "column" as const,
+                  alignItems: "center",
+                  padding: "3px 6px",
+                  lineHeight: "1.1",
+                  gap: 0,
+                  fontFamily: "serif",
+                  fontSize: 14,
+                }}
+                onClick={() => onTimeSigChange(ts.value)}
+              >
+                <span style={{ borderBottom: "1px solid currentColor", paddingBottom: 1, width: "100%", textAlign: "center" }}>{ts.top}</span>
+                <span style={{ textAlign: "center", width: "100%" }}>{ts.bot}</span>
+              </button>
+            );
+          })}
+        </div>
+      </Section>
 
       {/* ── Notes & Rests ──────────────────────────────────────────── */}
       <Section id="noteRest" label="Notes & Rests" open={!!open.noteRest} onToggle={toggle}>

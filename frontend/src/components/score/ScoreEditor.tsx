@@ -37,6 +37,18 @@ function timeSigSlots(ts: string): number {
   return Math.round(t * (16 / b));
 }
 
+/** Returns true when a note of `duration` placed at `slot` would exceed the measure capacity. */
+function wouldOverflow(slot: number, duration: string, capacity: number): boolean {
+  const slots = DURATION_SLOTS[duration] ?? 4;
+  return slot >= capacity || slot + slots > capacity;
+}
+
+/** Snap a raw 16th-note slot to the nearest valid beat start for the given duration. */
+function snapSlot(rawSlot: number, duration: string): number {
+  const dur = DURATION_SLOTS[duration] ?? 4;
+  return Math.floor(rawSlot / dur) * dur;
+}
+
 // ─── Pitch model ──────────────────────────────────────────────────────────────
 
 interface StepDef { pitch: string; isLine: boolean }
@@ -423,19 +435,28 @@ function MeasurePanel({
   const hoverOccupied = internalHover
     ? noteAt(internalHover.slot, internalHover.row) !== -1
     : false;
+  const hoverOverflows = internalHover
+    ? wouldOverflow(internalHover.slot, tool.duration, totalSlots)
+    : false;
 
   function onMouseMove(e: React.MouseEvent<SVGSVGElement>) {
     const c = getCell(e);
-    onHoverChange(c?.slot ?? null, c?.row ?? null);
+    if (!c) { onHoverChange(null, null); return; }
+    // Snap hover ghost to duration grid so the full beat area previews correctly
+    onHoverChange(snapSlot(c.slot, tool.duration), c.row);
   }
   function onMouseLeave() { onHoverChange(null, null); }
 
   function onClick(e: React.MouseEvent<SVGSVGElement>) {
     const c = getCell(e);
     if (!c) return;
+    // Check raw position first — allows selecting notes placed at any slot
     const ni = noteAt(c.slot, c.row);
     if (ni !== -1) { onNoteClick(ni); return; }
-    onPlace(c.slot, c.row);
+    // Snap to duration grid for placement so the full beat area is clickable
+    const slot = snapSlot(c.slot, tool.duration);
+    if (wouldOverflow(slot, tool.duration, totalSlots)) return;
+    onPlace(slot, c.row);
   }
 
   const isEmpty = sm.notes.length === 0;
@@ -462,8 +483,10 @@ function MeasurePanel({
           display: "block",
           background: "white",
           userSelect: "none",
-          cursor: internalHover && !hoverOccupied ? "crosshair"
-                : hoverOccupied ? "pointer" : "default",
+          cursor: internalHover && !hoverOccupied && !hoverOverflows ? "crosshair"
+                : hoverOccupied ? "pointer"
+                : hoverOverflows ? "not-allowed"
+                : "default",
         }}
         onMouseMove={onMouseMove}
         onMouseLeave={onMouseLeave}
@@ -555,7 +578,7 @@ function MeasurePanel({
         })}
 
         {/* ── Ghost note on hover ───────────────────────────── */}
-        {internalHover && !hoverOccupied && (
+        {internalHover && !hoverOccupied && !hoverOverflows && (
           <GhostHead
             cx={internalHover.slot * slotW + slotW / 2}
             cy={internalHover.row * ROW_H + ROW_H / 2}
@@ -706,7 +729,8 @@ interface ScoreEditorProps {
 }
 
 export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
-  const totalSlots = timeSigSlots(chart.time_sig);
+  const [timeSig,    setTimeSig]    = useState(chart.time_sig);
+  const totalSlots = timeSigSlots(timeSig);
 
   const [settings,   setSettings]   = useState<ScoreSettingsValues>(DEFAULT_SCORE_SETTINGS);
   const [tool,       setTool]       = useState<ToolState>(DEFAULT_TOOL);
@@ -724,6 +748,7 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
   const measureW = Math.round(MEASURE_W_BASE * settings.measureZoom);
 
   useEffect(() => {
+    setTimeSig(chart.time_sig);
     setLocalNotes(Object.fromEntries(chart.measures.map((m) => [m.id, m.notes])));
     setDirty({});
     setSelMid(null); setSelNi(null);
@@ -747,6 +772,8 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
   function handlePlace(mid: number, slot: number, row: number) {
     const rowDef = D_ROWS[row];
     if (!rowDef) return;
+    // Enforce measure capacity — reject if note would overflow
+    if (wouldOverflow(slot, tool.duration, totalSlots)) return;
     const pitch = tool.isRest ? rowDef.pitch : withAcc(rowDef.pitch, tool.accidental);
     const note: ChartNote = {
       id: -(Date.now()), measure_id: mid,
@@ -757,6 +784,23 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
     };
     changeNotes(mid, [...(localNotes[mid] ?? []), note]);
     setSelMid(null); setSelNi(null);
+  }
+
+  async function handleTimeSigChange(ts: string) {
+    setTimeSig(ts);
+    try {
+      const updated = await apiFetch<Chart>(
+        `/api/charts/${chart.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ time_sig: ts }),
+        }
+      );
+      onSaved(updated);
+    } catch {
+      // non-fatal — local state already reflects the change
+    }
   }
 
   async function saveMeasure(mid: number) {
@@ -812,7 +856,12 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
       <ScoreSettings settings={settings} onChange={setSettings} />
 
       {/* ── Note input toolbar ─────────────────────────────────── */}
-      <NoteEditorToolbar tool={tool} onToolChange={setTool} />
+      <NoteEditorToolbar
+        tool={tool}
+        onToolChange={setTool}
+        timeSig={timeSig}
+        onTimeSigChange={(ts) => { void handleTimeSigChange(ts); }}
+      />
 
       {/* ── Status / save row ──────────────────────────────────── */}
       <div style={{ display: "flex", alignItems: "center", gap: 10,
@@ -881,7 +930,7 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
                 tool={tool}
                 totalSlots={totalSlots}
                 isFirst={si === 0}
-                timeSig={chart.time_sig}
+                timeSig={timeSig}
                 measureW={measureW}
                 hoverZoom={settings.hoverZoom}
                 selMeasure={selMid}

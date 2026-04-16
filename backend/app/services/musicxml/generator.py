@@ -171,6 +171,33 @@ def _flush_beam_run(
     roles[indices[-1]][1] = group_id
 
 
+def _measure_capacity(time_sig: str) -> int:
+    """
+    Return the total 16th-note slots available in one measure of *time_sig*.
+    Formula: (numerator * 16) // denominator
+      4/4  → 16,  3/4 → 12,  2/4 → 8
+      6/8  → 12,  9/8 → 18,  12/8 → 24
+    """
+    try:
+        parts = time_sig.split("/")
+        n, d = int(parts[0]), int(parts[1]) if len(parts) > 1 else 4
+    except (ValueError, IndexError):
+        n, d = 4, 4
+    return (n * 16) // d
+
+
+# Durations in descending order of length — used for clamping
+_DURATIONS_DESC = ("whole", "half", "quarter", "eighth", "16th")
+
+
+def _largest_fitting_duration(slots: int) -> str | None:
+    """Return the longest standard duration whose tick count fits within *slots*."""
+    for dur in _DURATIONS_DESC:
+        if _DURATION_TICKS[dur] <= slots:
+            return dur
+    return None
+
+
 def _sub(parent: ET.Element, tag: str, text: str | None = None, **attrib: str) -> ET.Element:
     el = ET.SubElement(parent, tag, **attrib)
     if text is not None:
@@ -204,11 +231,16 @@ def _parse_pitch(pitch_str: str) -> tuple[str, str | None, int]:
     return step, alter, octave
 
 
-def _build_note_element(note: ScoreNote, beam_role: str = "none") -> ET.Element:
+def _build_note_element(
+    note: ScoreNote,
+    beam_role: str = "none",
+    duration_override: str | None = None,
+) -> ET.Element:
     el = ET.Element("note")
     # Use notation_duration when available (quantized for clean measure rendering);
     # fall back to the raw-snapped duration for backward compat.
-    effective_duration = note.notation_duration or note.duration
+    # duration_override takes highest precedence (used for capacity clamping).
+    effective_duration = duration_override or note.notation_duration or note.duration
     ticks = _DURATION_TICKS.get(effective_duration, 4)
     note_type = _DURATION_TYPE.get(effective_duration, "quarter")
 
@@ -331,9 +363,31 @@ def _build_measure(
             key=lambda n: n.notation_position if n.notation_position is not None else n.position,
         )
         effective_time_sig = measure.time_sig_override or chart_time_sig
+        capacity = _measure_capacity(effective_time_sig)
         beam_roles = _compute_beam_roles(sorted_notes, effective_time_sig)
+        notes_written = 0
         for note, (role, _group_id) in zip(sorted_notes, beam_roles):
-            m_el.append(_build_note_element(note, beam_role=role))
+            pos = note.notation_position if note.notation_position is not None else note.position
+            # Skip notes that start at or beyond the measure boundary
+            if pos >= capacity:
+                continue
+            effective_dur = note.notation_duration or note.duration
+            ticks = _DURATION_TICKS.get(effective_dur, 4)
+            duration_override: str | None = None
+            if pos + ticks > capacity:
+                # Clamp to the largest duration that fits in the remaining slots
+                clamped = _largest_fitting_duration(capacity - pos)
+                if clamped is None:
+                    continue  # no standard duration fits; skip
+                duration_override = clamped
+            m_el.append(_build_note_element(note, beam_role=role, duration_override=duration_override))
+            notes_written += 1
+        if notes_written == 0:
+            # All notes were out-of-bounds or unrepresentable; write a whole rest
+            rest_el = ET.SubElement(m_el, "note")
+            ET.SubElement(rest_el, "rest", measure="yes")
+            _sub(rest_el, "duration", str(_DURATION_TICKS["whole"]))
+            _sub(rest_el, "type", "whole")
     else:
         # Default: whole rest
         rest_el = ET.SubElement(m_el, "note")
