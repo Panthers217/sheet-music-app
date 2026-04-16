@@ -55,6 +55,121 @@ _DURATION_TYPE: dict[str, str] = {
     "16th": "16th",
 }
 
+# Durations eligible for beaming
+_BEAMABLE: frozenset[str] = frozenset({"eighth", "16th"})
+
+
+# ─── Beaming helpers ──────────────────────────────────────────────────────────
+
+
+def _get_beam_windows(time_sig: str) -> list[tuple[int, int]]:
+    """
+    Return [start, end) half-open intervals (16th-note slots) defining the
+    rhythmic groups within which notes may be beamed.  Mirrors the TypeScript
+    getBeamWindows() in frontend/src/lib/beaming.ts.
+    """
+    try:
+        parts = time_sig.split("/")
+        n, d = int(parts[0]), int(parts[1]) if len(parts) > 1 else 4
+    except (ValueError, IndexError):
+        n, d = 4, 4
+
+    # Compound meters (6/8, 9/8, 12/8): groups of 3 eighth notes
+    if d == 8 and n % 3 == 0:
+        group_slots = 6
+        count = n // 3
+        return [(i * group_slots, (i + 1) * group_slots) for i in range(count)]
+
+    if n == 4 and d == 4:
+        return [(0, 8), (8, 16)]
+    if n == 2 and d == 4:
+        return [(0, 8)]
+    if n == 3 and d == 4:
+        return [(0, 4), (4, 8), (8, 12)]
+
+    # Fallback: per-beat groups
+    beat_slots = round(16 / d)
+    return [(i * beat_slots, (i + 1) * beat_slots) for i in range(n)]
+
+
+def _compute_beam_roles(
+    notes: list[ScoreNote],
+    time_sig: str,
+) -> list[tuple[str, int]]:
+    """
+    Compute (role, group_id) for each note in *notes* (same order).
+    role: "begin" | "continue" | "end" | "none".
+    Mirrors the TypeScript computeBeaming() logic.
+    """
+    roles: list[list] = [["none", -1] for _ in notes]
+
+    # Sort by position, keeping original indices
+    indexed = sorted(
+        enumerate(notes),
+        key=lambda x: (
+            x[1].notation_position if x[1].notation_position is not None else x[1].position
+        ),
+    )
+
+    windows = _get_beam_windows(time_sig)
+    next_group = 0
+
+    for win_start, win_end in windows:
+        in_window = [
+            (i, n)
+            for i, n in indexed
+            if win_start
+            <= (n.notation_position if n.notation_position is not None else n.position)
+            < win_end
+        ]
+
+        run_indices: list[int] = []
+        prev_end = -1
+
+        for orig_i, n in in_window:
+            pos = n.notation_position if n.notation_position is not None else n.position
+            dur = n.notation_duration or n.duration
+            dur_slots = _DURATION_TICKS.get(dur, 4)
+
+            if n.is_rest or dur not in _BEAMABLE:
+                if len(run_indices) >= 2:
+                    _flush_beam_run(run_indices, roles, next_group)
+                    next_group += 1
+                run_indices = []
+                prev_end = pos + dur_slots
+                continue
+
+            if run_indices and pos != prev_end:
+                if len(run_indices) >= 2:
+                    _flush_beam_run(run_indices, roles, next_group)
+                    next_group += 1
+                run_indices = []
+
+            run_indices.append(orig_i)
+            prev_end = pos + dur_slots
+
+        if len(run_indices) >= 2:
+            _flush_beam_run(run_indices, roles, next_group)
+            next_group += 1
+
+    return [tuple(r) for r in roles]  # type: ignore[return-value]
+
+
+def _flush_beam_run(
+    indices: list[int],
+    roles: list[list],
+    group_id: int,
+) -> None:
+    if len(indices) < 2:
+        return
+    roles[indices[0]][0] = "begin"
+    roles[indices[0]][1] = group_id
+    for k in range(1, len(indices) - 1):
+        roles[indices[k]][0] = "continue"
+        roles[indices[k]][1] = group_id
+    roles[indices[-1]][0] = "end"
+    roles[indices[-1]][1] = group_id
+
 
 def _sub(parent: ET.Element, tag: str, text: str | None = None, **attrib: str) -> ET.Element:
     el = ET.SubElement(parent, tag, **attrib)
@@ -89,7 +204,7 @@ def _parse_pitch(pitch_str: str) -> tuple[str, str | None, int]:
     return step, alter, octave
 
 
-def _build_note_element(note: ScoreNote) -> ET.Element:
+def _build_note_element(note: ScoreNote, beam_role: str = "none") -> ET.Element:
     el = ET.Element("note")
     # Use notation_duration when available (quantized for clean measure rendering);
     # fall back to the raw-snapped duration for backward compat.
@@ -109,6 +224,16 @@ def _build_note_element(note: ScoreNote) -> ET.Element:
 
     _sub(el, "duration", str(ticks))
     _sub(el, "type", note_type)
+
+    # Beam elements — only for beamable notes in a group
+    if beam_role != "none" and effective_duration in _BEAMABLE:
+        beam1 = ET.SubElement(el, "beam", number="1")
+        beam1.text = beam_role
+        # 16th notes carry a second beam level
+        if effective_duration == "16th":
+            beam2 = ET.SubElement(el, "beam", number="2")
+            beam2.text = beam_role
+
     return el
 
 
@@ -201,8 +326,14 @@ def _build_measure(
     # --- Notes ---
     if measure.notes:
         # Sort by notation_position when available, else raw position
-        for note in sorted(measure.notes, key=lambda n: n.notation_position if n.notation_position is not None else n.position):
-            m_el.append(_build_note_element(note))
+        sorted_notes = sorted(
+            measure.notes,
+            key=lambda n: n.notation_position if n.notation_position is not None else n.position,
+        )
+        effective_time_sig = measure.time_sig_override or chart_time_sig
+        beam_roles = _compute_beam_roles(sorted_notes, effective_time_sig)
+        for note, (role, _group_id) in zip(sorted_notes, beam_roles):
+            m_el.append(_build_note_element(note, beam_role=role))
     else:
         # Default: whole rest
         rest_el = ET.SubElement(m_el, "note")

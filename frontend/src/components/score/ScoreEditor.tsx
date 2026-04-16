@@ -15,6 +15,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { apiFetch } from "@/components/api";
+import { computeBeaming } from "@/lib/beaming";
 import type { Chart, ChartMeasure, ChartNote } from "./ChartEditor";
 import NoteEditorToolbar, {
   DEFAULT_TOOL,
@@ -145,9 +146,10 @@ interface NHProps {
   duration: string; isRest: boolean;
   selected: boolean; acc: string;
   dir: "up" | "down"; slots: number; slotW: number;
+  beamed?: boolean; // when true, flags are suppressed (beam drawn by parent)
 }
 
-function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW }: NHProps) {
+function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, beamed = false }: NHProps) {
   const rx     = ROW_H * 0.68;
   const ry     = ROW_H * 0.40;
   const filled = duration !== "whole" && duration !== "half";
@@ -217,14 +219,14 @@ function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW }
         <line x1={stemX} y1={cy} x2={stemX} y2={stemEnd}
           stroke={NOTE_BLACK} strokeWidth={1.2} />
       )}
-      {duration === "eighth" && (
+      {!beamed && duration === "eighth" && (
         <path
           d={stemUp
             ? `M${stemX},${stemEnd} C${stemX+9},${stemEnd+5} ${stemX+8},${stemEnd+12} ${stemX+1},${stemEnd+16}`
             : `M${stemX},${stemEnd} C${stemX+9},${stemEnd-5} ${stemX+8},${stemEnd-12} ${stemX+1},${stemEnd-16}`}
           stroke={NOTE_BLACK} strokeWidth={1.3} fill="none" />
       )}
-      {duration === "16th" && (
+      {!beamed && duration === "16th" && (
         <>
           <path
             d={stemUp
@@ -322,6 +324,7 @@ interface MeasurePanelProps {
   tool:          ToolState;
   totalSlots:    number;
   measureW:      number;
+  timeSig:       string;
   isFocused:     boolean;
   hoverZoom:     number;
   selMeasure:    number | null;
@@ -334,7 +337,7 @@ interface MeasurePanelProps {
 }
 
 function MeasurePanel({
-  sm, tool, totalSlots, measureW, isFocused, hoverZoom,
+  sm, tool, totalSlots, measureW, timeSig, isFocused, hoverZoom,
   selMeasure, selNote, hoverSlot, hoverRow,
   onHoverChange, onNoteClick, onPlace,
 }: MeasurePanelProps) {
@@ -344,6 +347,54 @@ function MeasurePanel({
 
   const internalHover = hoverSlot !== null && hoverRow !== null
     ? { slot: hoverSlot, row: hoverRow } : null;
+
+  // ── Per-note render data (positions, stem coords, etc.) ──────────────────
+  const effectiveTimeSig = sm.measure.time_sig_override ?? timeSig;
+  const beamResults      = computeBeaming(sm.notes, effectiveTimeSig);
+
+  type NoteRenderInfo = {
+    note: typeof sm.notes[number];
+    ni: number;
+    di: number; slot: number; dur: string; durSl: number;
+    cx: number; cy: number;
+    ac: string;
+    leds: number[];
+    sel: boolean;
+    dir: "up" | "down";
+    stemX: number; stemEnd: number;
+  };
+
+  const noteData: NoteRenderInfo[] = sm.notes.map((note, ni) => {
+    const di    = pitchToDRow(note.pitch);
+    const slot  = note.notation_position ?? note.position;
+    const dur   = note.notation_duration  ?? note.duration;
+    const durSl = DURATION_SLOTS[dur] ?? 4;
+    const cx    = (note.is_rest && dur === "whole")
+      ? totalSlots * slotW / 2
+      : slot * slotW + slotW / 2;
+    const cy    = di * ROW_H + ROW_H / 2;
+    const dir   = note.is_rest ? "up" : noteStemDir(di);
+    const rx    = ROW_H * 0.68;
+    const stemX = dir === "up" ? cx + rx - 1 : cx - rx + 1;
+    const stemEnd = dir === "up" ? cy - STEM_LEN : cy + STEM_LEN;
+    return {
+      note, ni, di, slot, dur, durSl, cx, cy,
+      ac: accSign(note.pitch), leds: ledgerYs(di),
+      sel: selMeasure === sm.measure.id && selNote === ni,
+      dir, stemX, stemEnd,
+    };
+  });
+
+  // Collect beam groups (groupId → list of noteData entries)
+  const beamGroupMap = new Map<number, NoteRenderInfo[]>();
+  noteData.forEach((info, i) => {
+    const br = beamResults[i];
+    if (br && br.groupId !== -1) {
+      const g = beamGroupMap.get(br.groupId) ?? [];
+      g.push(info);
+      beamGroupMap.set(br.groupId, g);
+    }
+  });
 
   function getCell(e: React.MouseEvent<SVGSVGElement>) {
     const svg = svgRef.current;
@@ -455,20 +506,9 @@ function MeasurePanel({
         {isEmpty && <WholeMeasureRest cx={measureW / 2} />}
 
         {/* ── Notes ────────────────────────────────────────── */}
-        {sm.notes.map((note, ni) => {
-          const di    = pitchToDRow(note.pitch);
-          const slot  = note.notation_position ?? note.position;
-          const dur   = note.notation_duration ?? note.duration;
-          const durSl = DURATION_SLOTS[dur] ?? 4;
-          // Whole rests are centered across the full measure width, not pinned to slot 0
-          const cx    = (note.is_rest && dur === "whole")
-            ? totalSlots * slotW / 2
-            : slot * slotW + slotW / 2;
-          const cy    = di * ROW_H + ROW_H / 2;
-          const ac    = accSign(note.pitch);
-          const leds  = ledgerYs(di);
-          const sel   = selMeasure === sm.measure.id && selNote === ni;
-          const dir   = note.is_rest ? "up" : noteStemDir(di);
+        {noteData.map(({ note, ni, cx, cy, dur, durSl, ac, leds, sel, dir }) => {
+          const br     = beamResults[ni];
+          const beamed = br ? br.role !== "none" : false;
 
           return (
             <g key={`n${note.id}-${ni}`} style={{ cursor: "pointer" }}
@@ -480,7 +520,36 @@ function MeasurePanel({
               ))}
               <NoteHead cx={cx} cy={cy} duration={dur}
                 isRest={note.is_rest} selected={sel}
-                acc={ac} dir={dir} slots={durSl} slotW={slotW} />
+                acc={ac} dir={dir} slots={durSl} slotW={slotW}
+                beamed={beamed} />
+            </g>
+          );
+        })}
+
+        {/* ── Beams ─────────────────────────────────────────── */}
+        {Array.from(beamGroupMap.entries()).map(([gid, group]) => {
+          if (group.length < 2) return null;
+          const dir    = group[0]!.dir;
+          const sorted = [...group].sort((a, b) => a.slot - b.slot);
+          const x1     = sorted[0]!.stemX;
+          const x2     = sorted[sorted.length - 1]!.stemX;
+          const avgEnd = sorted.reduce((s, n) => s + n.stemEnd, 0) / sorted.length;
+          const beamH  = ROW_H * 0.38;
+          // Centre beam rect on average stem-tip Y
+          const beamY  = avgEnd - beamH / 2;
+          const bx     = Math.min(x1, x2);
+          const bw     = Math.max(1, Math.abs(x2 - x1));
+          // Draw second beam level only when every note in group is a 16th
+          const all16  = sorted.every((n) => n.dur === "16th");
+          const gap2   = beamH + 2;
+          const beam2Y = dir === "up" ? beamY + gap2 : beamY - gap2;
+
+          return (
+            <g key={`beam-${gid}`} style={{ pointerEvents: "none" }}>
+              <rect x={bx} y={beamY} width={bw} height={beamH} fill={NOTE_BLACK} />
+              {all16 && (
+                <rect x={bx} y={beam2Y} width={bw} height={beamH} fill={NOTE_BLACK} />
+              )}
             </g>
           );
         })}
@@ -548,6 +617,7 @@ function ScoreSystem({
             tool={tool}
             totalSlots={totalSlots}
             measureW={measureW}
+            timeSig={timeSig}
             isFocused={isFocused}
             hoverZoom={hoverZoom}
             selMeasure={selMeasure}

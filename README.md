@@ -332,12 +332,121 @@ npm run lint
 npm run build
 ```
 
+## Note editor — supported notation
+
+The custom SVG score editor (`ScoreEditor.tsx` + `NoteEditorToolbar.tsx`) supports:
+
+### Note durations
+| Duration | Grid slots (16th = 1) | Beamable |
+|---|---|---|
+| Whole | 16 | No |
+| Half | 8 | No |
+| Quarter | 4 | No |
+| Eighth | 2 | **Yes** |
+| Sixteenth | 1 | **Yes** |
+
+### Accidentals
+Natural (♮), Sharp (♯), Flat (♭)
+
+### Pitch range
+C2 – B6, treble clef staff displayed A5 – C4 (with ledger lines for C4).
+
+### Rests
+All durations above are available as rests.
+
+### Articulations (UI — stored locally; backend persistence planned)
+Staccato, Accent, Tenuto, Fermata, Staccatissimo
+
+### Dynamics (UI — stored locally; backend persistence planned)
+pp, p, mp, mf, f, ff
+
+---
+
+## Automatic beaming
+
+Notes are grouped into beams automatically based on the time signature.  The
+logic lives in `frontend/src/lib/beaming.ts` and mirrors exactly in
+`backend/app/services/musicxml/generator.py` (so OSMD's MusicXML rendering
+and the custom SVG editor both beam identically).
+
+### Beat windows by time signature
+
+| Time sig | Beat windows (16th-note slots) | Notes |
+|---|---|---|
+| 4/4 | [0–7] [8–15] | Half-measure groups |
+| 3/4 | [0–3] [4–7] [8–11] | Per-beat groups |
+| 2/4 | [0–7] | Whole-measure group |
+| 6/8 | [0–5] [6–11] | Dotted-quarter compound groups |
+| 9/8 | [0–5] [6–11] [12–17] | Three dotted-quarter groups |
+| 12/8 | [0–5] [6–11] [12–17] [18–23] | Four dotted-quarter groups |
+| other | Per-beat (fallback) | `16/denominator` slots |
+
+### Beaming rules
+
+1. Only **eighth** and **sixteenth** notes can be beamed.
+2. Notes must be **strictly adjacent** (no gap in the 16th-note grid).
+3. A rest or non-beamable note **breaks** the beam at that point.
+4. Two beamable notes in **different beat windows** are never beamed together.
+5. A solo beamable note that forms no group stays flagged individually.
+
+### Second beam level (for 16th notes)
+
+When **every** note in a beam group is a sixteenth, two parallel beam lines
+are drawn.  In the MusicXML output this is encoded as `<beam number="1">` and
+`<beam number="2">` elements per note.
+
+### Known limitations
+
+- Mixed eighth+sixteenth groups: SVG editor draws one beam only (second beam
+  for 16ths is emitted in MusicXML but not drawn in the custom SVG editor).
+- 32nd notes are not yet supported in either editor or generator.
+- Tuplets (triplets, etc.) are not yet supported.
+- Beam angles are always horizontal (correct engraving would tilt beams to
+  follow the pitch contour of the group).
+
+### Verifying beaming
+
+```bash
+# Backend beaming smoke-tests
+cd backend && source .venv/bin/activate
+python3 - <<'EOF'
+from app.services.musicxml.generator import _compute_beam_roles
+from app.services.score.model import ScoreNote
+
+def n(pos, dur): return ScoreNote(pitch="E4", duration=dur, is_rest=False, position=pos)
+
+# 4/4: two adjacent eighths → beamed
+roles = _compute_beam_roles([n(0,"eighth"), n(2,"eighth")], "4/4")
+assert roles[0][0] == "begin" and roles[1][0] == "end", roles
+
+# 4/4: eighth spanning window boundary (slot 6 + slot 8) → NOT beamed
+roles = _compute_beam_roles([n(6,"eighth"), n(8,"eighth")], "4/4")
+assert all(r[0] == "none" for r in roles), roles
+
+# 6/8: six adjacent eighths → two groups of 3
+roles = _compute_beam_roles([n(i*2,"eighth") for i in range(6)], "6/8")
+expected = ["begin","continue","end","begin","continue","end"]
+assert [r[0] for r in roles] == expected, roles
+
+print("All beaming checks passed.")
+EOF
+```
+
+```bash
+# Frontend beaming unit tests (requires jest or vitest)
+cd frontend
+npx jest src/lib/beaming.test.ts --no-coverage
+```
+
+---
+
 ## Current limitations
 
 - Transcription is a placeholder (returns 8-measure whole-rest scaffold with fixed chord symbols).
 - No real pitch/beat/chord analysis yet — transcription module is pluggable for future engines.
 - Single-part / single-instrument MusicXML only.
 - No drag-and-drop notation editor — chart editing is form-based.
+- Articulations and dynamics are stored in the UI `ToolState` but not yet persisted to the DB.
 - No user authentication.
 - CPU-only Demucs (no GPU acceleration in dev).
 
@@ -348,4 +457,7 @@ npm run build
 3. Multi-part MusicXML (separate parts per Demucs stem).
 4. Export to PDF via LilyPond or similar.
 5. Add user authentication.
+6. Persist articulations and dynamics to the DB / MusicXML.
+7. Mixed eighth+sixteenth beam groups with partial secondary beams.
+
 
