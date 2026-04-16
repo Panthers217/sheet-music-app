@@ -8,6 +8,8 @@ import React, { useState } from "react";
 
 export type NoteDuration = "whole" | "half" | "quarter" | "eighth" | "16th";
 
+export type ClefType = "treble" | "bass" | "alto";
+
 export type Articulation =
   | ""
   | "staccato"
@@ -49,6 +51,8 @@ interface Props {
   onToolChange:   (t: ToolState) => void;
   timeSig:        string;
   onTimeSigChange: (ts: string) => void;
+  clef:            ClefType;
+  onClefChange:    (c: ClefType) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +262,12 @@ const TIME_SIGNATURES: { value: string; top: string; bot: string }[] = [
   { value: "6/8",  top: "6",  bot: "8" },
   { value: "9/8",  top: "9",  bot: "8" },
   { value: "12/8", top: "12", bot: "8" },
+];
+
+const CLEFS: { id: ClefType; label: string; symbol: string }[] = [
+  { id: "treble", label: "Treble (G)",  symbol: "\uE050" },
+  { id: "bass",   label: "Bass (F)",    symbol: "\uE062" },
+  { id: "alto",   label: "Alto (C)",    symbol: "\uE05C" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -481,8 +491,9 @@ function Section({
 // Component
 // ---------------------------------------------------------------------------
 
-export default function NoteEditorToolbar({ tool, onToolChange, timeSig, onTimeSigChange }: Props) {
+export default function NoteEditorToolbar({ tool, onToolChange, timeSig, onTimeSigChange, clef, onClefChange }: Props) {
   const [open, setOpen] = useState<Record<string, boolean>>({
+    clef:         true,
     timeSig:      true,
     noteRest:     true,
     pitch:        true,
@@ -514,6 +525,39 @@ export default function NoteEditorToolbar({ tool, onToolChange, timeSig, onTimeS
         <div style={{ flex: 1, height: 1, background: "#2a2d4a" }} />
         <span style={S.activeTool}>{displayStr}</span>
       </div>
+
+      {/* ── Clef ───────────────────────────────────────────────────── */}
+      <Section
+        id="clef"
+        label="Clef"
+        open={!!open.clef}
+        onToggle={toggle}
+        badge={<span style={S.badge("#9ece6a")}>{CLEFS.find((c) => c.id === clef)?.label ?? clef}</span>}
+      >
+        <div style={S.row}>
+          {CLEFS.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              title={c.label}
+              style={{
+                ...S.smallBtn(clef === c.id),
+                minWidth: 80,
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+              }}
+              onClick={() => onClefChange(c.id)}
+            >
+              <span style={{ fontFamily: "Bravura, serif", fontSize: 18, lineHeight: 1 }}>{c.symbol}</span>
+              <span style={{ fontFamily: "system-ui", fontSize: 11 }}>{c.label}</span>
+            </button>
+          ))}
+        </div>
+        <p style={{ margin: "4px 0 0", fontSize: 10, color: "#565f89" }}>
+          Bass/alto clef pitch mapping — future milestone.
+        </p>
+      </Section>
 
       {/* ── Time Signature ─────────────────────────────────────────── */}
       <Section

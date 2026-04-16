@@ -1,3 +1,11 @@
+@font-face {
+  font-family: "Bravura";
+  src: url("/fonts/BravuraText.woff2") format("woff2");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap; /* show serif fallback immediately, swap in Bravura when ready */
+}
+
 :root {
   font-family: Inter, system-ui, -apple-system, sans-serif;
   color: #171717;

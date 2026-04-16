@@ -19,6 +19,7 @@ import { computeBeaming } from "@/lib/beaming";
 import type { Chart, ChartMeasure, ChartNote } from "./ChartEditor";
 import NoteEditorToolbar, {
   DEFAULT_TOOL,
+  type ClefType,
   type ToolState,
 } from "./NoteEditorToolbar";
 import ScoreSettings, {
@@ -161,8 +162,8 @@ const LINE_DIDXS = D_ROWS
 
 const ROW_H          = 14;    // px per pitch row
 const MEASURE_W_BASE = 176;   // base measure content width — scaled by measureZoom
-const CLEF_W1        = 66;    // clef panel width for first system (clef + time sig)
-const CLEF_W2        = 36;    // clef panel width for other systems
+const CLEF_W1        = 86;    // clef panel width for first system (clef + time sig)
+const CLEF_W2        = 42;    // clef panel width for other systems (clef only)
 const M_PER_ROW      = 4;     // measures per system row
 const STEM_LEN       = ROW_H * 3.5;
 
@@ -375,20 +376,57 @@ function WholeMeasureRest({ cx }: { cx: number }) {
   );
 }
 
-// ─── ClefPanel ────────────────────────────────────────────────────────────────
-// Left-side SVG per system: staff lines, clef glyph, optional time signature.
+// ─── Clef support ─────────────────────────────────────────────────────────────
+// Bravura (SMuFL) codepoints for each clef type.
+// NOTE: switching clef also requires a matching pitch-model update (future work).
 
-function ClefPanel({ isFirst, timeSig }: { isFirst: boolean; timeSig: string }) {
-  const clefW    = isFirst ? CLEF_W1 : CLEF_W2;
+const CLEF_GLYPHS: Record<ClefType, string> = {
+  treble: "\uE050",  // SMuFL gClef
+  bass:   "\uE062",  // SMuFL fClef
+  alto:   "\uE05C",  // SMuFL cClef
+};
+
+// ─── ClefPanel ────────────────────────────────────────────────────────────────
+// Left-side SVG per system: staff lines, Bravura clef glyph, optional time sig.
+//
+// Bravura sizing: fontSize = staffH makes 1 em = 4 staff spaces (the staff height).
+// Each clef's glyph y=0 (baseline) maps to a specific staff line:
+//   treble → G4 line (LINE_YS[3], 4th from top)
+//   bass   → F  line (LINE_YS[1], 2nd from top — where the two dots straddle)
+//   alto   → B4 middle line (LINE_YS[2])
+
+function ClefPanel({ isFirst, timeSig, clef = "treble" }: {
+  isFirst: boolean;
+  timeSig: string;
+  clef?: ClefType;
+}) {
+  const clefW  = CLEF_W1; // same width on every row so clef position is identical throughout
   const [tsTop, tsBot] = timeSig.split("/");
-  const staffH   = STAFF_BOT + ROW_H - STAFF_TOP;
-  const fontSize = staffH * 2.1;
-  const clefY    = STAFF_BOT + ROW_H + staffH * 0.42;
-  const midY     = STAFF_TOP + (STAFF_BOT - STAFF_TOP) / 2;
-  const tsFz     = (STAFF_BOT - STAFF_TOP) * 0.55;
+  // fontSize = staff height → 1em = 4 staff spaces in Bravura
+  const staffH = STAFF_BOT - STAFF_TOP;
+  // Bravura font metrics for each clef glyph (in 1000-unit UPM):
+  //   treble \uE050: yMin=-329, yMax=1078  — origin IS at the G4 line (normal baseline)
+  //   bass   \uE062: yMin=92,   yMax=810   — entire glyph ABOVE font baseline; shift y down
+  //     → place y so glyph-top (yMax) lands on the F-line (LINE_YS[1])
+  //   alto   \uE05C: yMin=-5,   yMax=805   — same; center glyph mid-point on middle line
+  //     → place y so glyph-center ((yMax+yMin)/2 ≈ 400/1000) aligns with LINE_YS[2]
+  const clefBaselineY =
+    clef === "treble"
+      ? (LINE_YS[3] ?? STAFF_BOT)
+      : clef === "bass"
+      ? (LINE_YS[1] ?? STAFF_TOP) + Math.round(0.81 * staffH)   // ≈ 63 + 91 = 154
+      :                             (LINE_YS[2] ?? (STAFF_TOP + STAFF_BOT) / 2) + Math.round(0.40 * staffH); // ≈ 91 + 45 = 136
+  const glyph  = CLEF_GLYPHS[clef];
+  // Time sig: each digit centred in its staff half
+  const halfH  = staffH / 2;
+  const tsFz   = Math.round(halfH * 0.88);
+  const tsX    = 67;  // centred in right portion of the 86px panel
+  const tsTopY = STAFF_TOP + halfH * 0.5;
+  const tsBotY = STAFF_TOP + halfH * 1.5;
 
   return (
     <svg width={clefW} height={SVG_H}
+      overflow="visible"
       style={{ display: "block", flexShrink: 0, background: "white" }}>
       {/* Staff lines */}
       {LINE_YS.map((y, li) => (
@@ -398,21 +436,24 @@ function ClefPanel({ isFirst, timeSig }: { isFirst: boolean; timeSig: string }) 
       {/* Opening barline (right edge) */}
       <line x1={clefW - 0.5} y1={STAFF_TOP} x2={clefW - 0.5} y2={STAFF_BOT + ROW_H / 2}
         stroke="#000" strokeWidth={1.4} />
-      {/* Treble clef glyph */}
-      <text x={3} y={clefY} fontSize={fontSize} fill="#1a1a1a" fontFamily="serif"
+      {/* Clef glyph — Bravura SMuFL font, precisely sized to the staff */}
+      <text x={2} y={clefBaselineY} fontSize={clef === "treble" ? staffH : clef === "bass" ? 100 : 90} fill="#1a1a1a"
+        fontFamily="Bravura, serif"
         style={{ userSelect: "none", pointerEvents: "none" }}>
-        𝄞
+        {glyph}
       </text>
       {/* Time signature — first system only */}
       {isFirst && (
         <>
-          <text x={CLEF_W1 - 14} y={midY + 2}
-            fontSize={tsFz} fill="#1a1a1a" textAnchor="middle" fontFamily="serif"
+          <text x={tsX} y={tsTopY}
+            fontSize={tsFz} fill="#1a1a1a" textAnchor="middle"
+            dominantBaseline="central" fontFamily="serif"
             style={{ userSelect: "none", pointerEvents: "none" }}>
             {tsTop}
           </text>
-          <text x={CLEF_W1 - 14} y={midY + tsFz + 1}
-            fontSize={tsFz} fill="#1a1a1a" textAnchor="middle" fontFamily="serif"
+          <text x={tsX} y={tsBotY}
+            fontSize={tsFz} fill="#1a1a1a" textAnchor="middle"
+            dominantBaseline="central" fontFamily="serif"
             style={{ userSelect: "none", pointerEvents: "none" }}>
             {tsBot}
           </text>
@@ -747,6 +788,7 @@ interface SysProps {
   totalSlots:  number;
   isFirst:     boolean;
   timeSig:     string;
+  clef?:       ClefType;
   measureW:    number;
   hoverZoom:   number;
   selMeasure:  number | null;
@@ -759,13 +801,13 @@ interface SysProps {
 }
 
 function ScoreSystem({
-  measures, tool, totalSlots, isFirst, timeSig,
+  measures, tool, totalSlots, isFirst, timeSig, clef = "treble",
   measureW, hoverZoom, selMeasure, selNote,
   hover, onHover, onNoteClick, onPlace,
 }: SysProps) {
   return (
     <div style={{ display: "flex", alignItems: "flex-end", lineHeight: 0 }}>
-      <ClefPanel isFirst={isFirst} timeSig={timeSig} />
+      <ClefPanel isFirst={isFirst} timeSig={timeSig} clef={clef} />
       {measures.map((sm) => {
         const isFocused =
           hover?.mid  === sm.measure.id ||
@@ -877,9 +919,10 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
   const [dirty,   setDirty]   = useState<Record<number, boolean>>({});
   const [saving,  setSaving]  = useState<Record<number, boolean>>({});
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-  const [selMid,  setSelMid]  = useState<number | null>(null);
+      const [selMid,  setSelMid]  = useState<number | null>(null);
   const [selNi,   setSelNi]   = useState<number | null>(null);
   const [hover,   setHover]   = useState<{ mid: number; slot: number; row: number } | null>(null);
+  const [clef,    setClef]    = useState<ClefType>("treble");
 
   // Effective measure content width — responds to measureZoom setting
   const measureW = Math.round(MEASURE_W_BASE * settings.measureZoom);
@@ -1001,6 +1044,8 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
         onToolChange={setTool}
         timeSig={timeSig}
         onTimeSigChange={(ts) => { void handleTimeSigChange(ts); }}
+        clef={clef}
+        onClefChange={setClef}
       />
 
       {/* ── Status / save row ──────────────────────────────────── */}
@@ -1071,6 +1116,7 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
                 totalSlots={totalSlots}
                 isFirst={si === 0}
                 timeSig={timeSig}
+                clef={clef}
                 measureW={measureW}
                 hoverZoom={settings.hoverZoom}
                 selMeasure={selMid}
