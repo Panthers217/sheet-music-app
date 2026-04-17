@@ -27,6 +27,8 @@ _MIGRATIONS = [
     # Notation timing layer (separate from raw MIDI performance timing)
     "ALTER TABLE chart_notes ADD COLUMN notation_position INTEGER",
     "ALTER TABLE chart_notes ADD COLUMN notation_duration TEXT",
+    # User stem direction override
+    "ALTER TABLE chart_notes ADD COLUMN stem_direction TEXT",
 ]
 
 

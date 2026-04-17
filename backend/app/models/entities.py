@@ -156,6 +156,8 @@ class ChartNote(Base):
     # Derived by NotationQuantizer; used by MusicXML generator for clean measure-aware output.
     notation_position: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     notation_duration: Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
+    # User-overridden stem direction: "up" | "down" | None (auto)
+    stem_direction: Mapped[str | None] = mapped_column(String(10), nullable=True, default=None)
 
     measure: Mapped["ChartMeasure"] = relationship(back_populates="notes")
 

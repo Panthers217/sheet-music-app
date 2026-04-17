@@ -58,6 +58,8 @@ class ChartNoteResponse(BaseModel):
     # Quantized notation fields for score display
     notation_position: int | None = None
     notation_duration: str | None = None
+    # User-overridden stem direction
+    stem_direction: str | None = None
 
     class Config:
         from_attributes = True
@@ -68,6 +70,7 @@ class ChartNoteUpdate(BaseModel):
     pitch: str = "C4"
     duration: str = "quarter"
     is_rest: bool = False
+    stem_direction: str | None = None
 
 
 class ChartMeasureResponse(BaseModel):

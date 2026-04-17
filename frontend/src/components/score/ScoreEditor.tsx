@@ -161,10 +161,10 @@ const LINE_DIDXS = D_ROWS
 
 // ─── Fixed layout constants (staff geometry, not affected by zoom) ────────────
 
-const ROW_H          = 14;    // px per pitch row
-const MEASURE_W_BASE = 176;   // base measure content width — scaled by measureZoom
-const CLEF_W1        = 86;    // clef panel width for first system (clef + time sig)
-const CLEF_W2        = 42;    // clef panel width for other systems (clef only)
+const ROW_H          = 16;    // px per pitch row  (staff space = 2 × ROW_H = 32 px)
+const MEASURE_W_BASE = 240;   // base measure content width — scaled by measureZoom
+const CLEF_W1        = 98;    // clef panel width for first system (clef + time sig)
+const CLEF_W2        = 48;    // clef panel width for other systems (clef only)
 const M_PER_ROW      = 4;     // measures per system row
 const STEM_LEN       = ROW_H * 3.5;
 
@@ -358,27 +358,27 @@ function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, 
       )}
       {baseDur !== "whole" && !suppressStem && (
         <line x1={stemX} y1={cy} x2={stemX} y2={stemEnd}
-          stroke={NOTE_BLACK} strokeWidth={1.2} />
+          stroke={NOTE_BLACK} strokeWidth={1.4} />
       )}
       {!beamed && !suppressStem && baseDur === "eighth" && (
         <path
           d={stemUp
-            ? `M${stemX},${stemEnd} C${stemX+9},${stemEnd+5} ${stemX+8},${stemEnd+12} ${stemX+1},${stemEnd+16}`
-            : `M${stemX},${stemEnd} C${stemX+9},${stemEnd-5} ${stemX+8},${stemEnd-12} ${stemX+1},${stemEnd-16}`}
-          stroke={NOTE_BLACK} strokeWidth={1.3} fill="none" />
+            ? `M${stemX},${stemEnd} C${stemX+10},${stemEnd+6} ${stemX+9},${stemEnd+14} ${stemX+1},${stemEnd+18}`
+            : `M${stemX},${stemEnd} C${stemX+10},${stemEnd-6} ${stemX+9},${stemEnd-14} ${stemX+1},${stemEnd-18}`}
+          stroke={NOTE_BLACK} strokeWidth={1.5} fill="none" />
       )}
       {!beamed && !suppressStem && baseDur === "16th" && (
         <>
           <path
             d={stemUp
-              ? `M${stemX},${stemEnd} C${stemX+8},${stemEnd+4} ${stemX+7},${stemEnd+10} ${stemX+1},${stemEnd+13}`
-              : `M${stemX},${stemEnd} C${stemX+8},${stemEnd-4} ${stemX+7},${stemEnd-10} ${stemX+1},${stemEnd-13}`}
-            stroke={NOTE_BLACK} strokeWidth={1.3} fill="none" />
+              ? `M${stemX},${stemEnd} C${stemX+9},${stemEnd+5} ${stemX+8},${stemEnd+11} ${stemX+1},${stemEnd+15}`
+              : `M${stemX},${stemEnd} C${stemX+9},${stemEnd-5} ${stemX+8},${stemEnd-11} ${stemX+1},${stemEnd-15}`}
+            stroke={NOTE_BLACK} strokeWidth={1.5} fill="none" />
           <path
             d={stemUp
-              ? `M${stemX},${stemEnd+8} C${stemX+8},${stemEnd+12} ${stemX+7},${stemEnd+18} ${stemX+1},${stemEnd+21}`
-              : `M${stemX},${stemEnd-8} C${stemX+8},${stemEnd-12} ${stemX+7},${stemEnd-18} ${stemX+1},${stemEnd-21}`}
-            stroke={NOTE_BLACK} strokeWidth={1.3} fill="none" />
+              ? `M${stemX},${stemEnd+9} C${stemX+9},${stemEnd+14} ${stemX+8},${stemEnd+21} ${stemX+1},${stemEnd+24}`
+              : `M${stemX},${stemEnd-9} C${stemX+9},${stemEnd-14} ${stemX+8},${stemEnd-21} ${stemX+1},${stemEnd-24}`}
+            stroke={NOTE_BLACK} strokeWidth={1.5} fill="none" />
         </>
       )}
     </g>
@@ -445,7 +445,7 @@ function ClefPanel({ isFirst, timeSig, clef = "treble" }: {
   // Time sig: each digit centred in its staff half
   const halfH  = staffH / 2;
   const tsFz   = Math.round(halfH * 0.88);
-  const tsX    = 67;  // centred in right portion of the 86px panel
+  const tsX    = 78;  // centred in right portion of the 98px panel
   const tsTopY = STAFF_TOP + halfH * 0.5;
   const tsBotY = STAFF_TOP + halfH * 1.5;
 
@@ -599,7 +599,7 @@ function MeasurePanel({
       ? totalSlots * slotW / 2
       : slot * slotW + slotW / 2;
     const cy    = di * ROW_H + ROW_H / 2;
-    const dir   = note.is_rest ? "up" : noteStemDir(di);
+    const dir   = note.is_rest ? "up" : (note.stem_direction === "up" || note.stem_direction === "down" ? note.stem_direction : noteStemDir(di));
     const rx    = ROW_H * 0.68;
     const stemX = dir === "up" ? cx + rx - 1 : cx - rx + 1;
     const stemEnd = dir === "up" ? cy - STEM_LEN : cy + STEM_LEN;
@@ -623,6 +623,31 @@ function MeasurePanel({
     }
   });
 
+  // ── Beam direction normalization ─────────────────────────────────────────
+  // All notes in a beam group MUST share the same stem direction; otherwise
+  // stemX lands on opposite sides of different noteheads and the beam
+  // geometry is incoherent.
+  // Rule (standard engraving): use the average pitch row across all non-rest
+  // members of the group.
+  //   avgDi >= B4_DROW → stems up;  avgDi < B4_DROW → stems down.
+  // We recompute stemX and stemEnd for every member so that chord detection
+  // and the slant-geometry pass both see consistent values.
+  const _rx = ROW_H * 0.68;
+  beamGroupMap.forEach((group) => {
+    const nonRests = group.filter((n) => !n.note.is_rest);
+    if (nonRests.length === 0) return;
+    const avgDi   = nonRests.reduce((s, n) => s + n.di, 0) / nonRests.length;
+    // If any note in the group has an explicit stem_direction override, honour it.
+    const explicitDir = nonRests.find((n) => n.note.stem_direction === "up" || n.note.stem_direction === "down")?.note.stem_direction;
+    const beamDir: "up" | "down" = (explicitDir === "up" || explicitDir === "down") ? explicitDir : (avgDi >= B4_DROW ? "up" : "down");
+    group.forEach((info) => {
+      if (info.note.is_rest) return;
+      info.dir     = beamDir;
+      info.stemX   = beamDir === "up" ? info.cx + _rx - 1 : info.cx - _rx + 1;
+      info.stemEnd = beamDir === "up" ? info.cy - STEM_LEN : info.cy + STEM_LEN;
+    });
+  });
+
   // ── Chord detection (notes sharing the same slot form a chord) ────────────
   // Group non-rest notes by slot. Any slot with ≥2 notes is a chord.
   // We mutate dir / stemX / stemEnd on each member so the beam pass sees
@@ -641,9 +666,13 @@ function MeasurePanel({
   chordSlotMap.forEach((indices) => {
     if (indices.length < 2) return;
     const group = indices.map((i) => noteData[i]!);
-    // Chord stem direction: based on average pitch row (same rule as single notes)
-    const avgDi = group.reduce((s, n) => s + n.di, 0) / group.length;
-    const chordDir: "up" | "down" = avgDi >= B4_DROW ? "up" : "down";
+    // If any chord member is part of a beam group its direction was already
+    // fixed by the normalization pass above — honour that.  Otherwise fall
+    // back to the average-pitch-row rule for standalone chords.
+    const beamedMember = group.find((n) => (beamResults[n.ni]?.groupId ?? -1) !== -1);
+    const chordDir: "up" | "down" = beamedMember
+      ? beamedMember.dir
+      : (() => { const a = group.reduce((s, n) => s + n.di, 0) / group.length; return a >= B4_DROW ? "up" : "down"; })();
     // Outermost noteheads for stem extent
     const sortedByCy = [...group].sort((a, b) => a.cy - b.cy); // top (low cy) first
     const topNote = sortedByCy[0]!;  // highest pitch
@@ -710,17 +739,28 @@ function MeasurePanel({
 
     // Clamp slope to ±2 staff rows
     const maxSlant = ROW_H * 2;
-    const y1 = rawY1;
-    const y2 = rawY1 + Math.max(-maxSlant, Math.min(maxSlant, rawY2 - rawY1));
-    const span = x2 - x1 || 1;
-    const beamAtX = (x: number) => y1 + (y2 - y1) * (x - x1) / span;
+    const span     = x2 - x1 || 1;
+    const slope    = Math.max(-maxSlant, Math.min(maxSlant, rawY2 - rawY1)) / span;
+
+    // Anchor the beam line to the note with the most extreme natural stem tip:
+    //   stem-up   → min stemEnd (highest pitch, smallest Y = highest in SVG)
+    //   stem-down → max stemEnd (lowest  pitch, largest  Y = lowest  in SVG)
+    // This guarantees the beam always sits at the correct engraving height
+    // relative to the highest (or lowest) pitched note, never dragged in the
+    // wrong direction by notes further from the beam.
+    const extremal = dir === "up"
+      ? sorted.reduce((best, n) => n.stemEnd < best.stemEnd ? n : best)
+      : sorted.reduce((best, n) => n.stemEnd > best.stemEnd ? n : best);
+    const y1 = extremal.stemEnd - slope * (extremal.stemX - x1);
+    const y2 = y1 + slope * span;
+    const beamAtX = (x: number) => y1 + slope * (x - x1);
 
     // Write each note's exact beam-meeting Y back so stems and chord stems
     // both terminate precisely on the beam line.
     group.forEach((info) => { info.stemEnd = beamAtX(info.stemX); });
 
-    const beamH     = ROW_H * 0.5;
-    const gap2      = beamH + 2;
+    const beamH     = ROW_H * 0.625;   // ≈ 10 px at ROW_H=16 — matches standard 0.5 staff-space beam
+    const gap2      = beamH + 3;
     const gapOffset = dir === "up" ? gap2 : -gap2;
 
     // Secondary beam segments — de-dup notes by slot, then apply beam rules.
@@ -1106,26 +1146,26 @@ function MeasurePanel({
           return (
             <g key={`chord-stem-${cgid}`} style={{ pointerEvents: "none" }}>
               <line x1={cStemX} y1={stemY1} x2={cStemX} y2={cStemEnd}
-                stroke={NOTE_BLACK} strokeWidth={1.2} />
+                stroke={NOTE_BLACK} strokeWidth={1.4} />
               {!isInBeam && baseDur === "eighth" && (
                 <path
                   d={chordDir === "up"
-                    ? `M${cStemX},${cStemEnd} C${cStemX+9},${cStemEnd+5} ${cStemX+8},${cStemEnd+12} ${cStemX+1},${cStemEnd+16}`
-                    : `M${cStemX},${cStemEnd} C${cStemX+9},${cStemEnd-5} ${cStemX+8},${cStemEnd-12} ${cStemX+1},${cStemEnd-16}`}
-                  stroke={NOTE_BLACK} strokeWidth={1.3} fill="none" />
+                    ? `M${cStemX},${cStemEnd} C${cStemX+10},${cStemEnd+6} ${cStemX+9},${cStemEnd+14} ${cStemX+1},${cStemEnd+18}`
+                    : `M${cStemX},${cStemEnd} C${cStemX+10},${cStemEnd-6} ${cStemX+9},${cStemEnd-14} ${cStemX+1},${cStemEnd-18}`}
+                  stroke={NOTE_BLACK} strokeWidth={1.5} fill="none" />
               )}
               {!isInBeam && baseDur === "16th" && (
                 <>
                   <path
                     d={chordDir === "up"
-                      ? `M${cStemX},${cStemEnd} C${cStemX+8},${cStemEnd+4} ${cStemX+7},${cStemEnd+10} ${cStemX+1},${cStemEnd+13}`
-                      : `M${cStemX},${cStemEnd} C${cStemX+8},${cStemEnd-4} ${cStemX+7},${cStemEnd-10} ${cStemX+1},${cStemEnd-13}`}
-                    stroke={NOTE_BLACK} strokeWidth={1.3} fill="none" />
+                      ? `M${cStemX},${cStemEnd} C${cStemX+9},${cStemEnd+5} ${cStemX+8},${cStemEnd+11} ${cStemX+1},${cStemEnd+15}`
+                      : `M${cStemX},${cStemEnd} C${cStemX+9},${cStemEnd-5} ${cStemX+8},${cStemEnd-11} ${cStemX+1},${cStemEnd-15}`}
+                    stroke={NOTE_BLACK} strokeWidth={1.5} fill="none" />
                   <path
                     d={chordDir === "up"
-                      ? `M${cStemX},${cStemEnd+8} C${cStemX+8},${cStemEnd+12} ${cStemX+7},${cStemEnd+18} ${cStemX+1},${cStemEnd+21}`
-                      : `M${cStemX},${cStemEnd-8} C${cStemX+8},${cStemEnd-12} ${cStemX+7},${cStemEnd-18} ${cStemX+1},${cStemEnd-21}`}
-                    stroke={NOTE_BLACK} strokeWidth={1.3} fill="none" />
+                      ? `M${cStemX},${cStemEnd+9} C${cStemX+9},${cStemEnd+14} ${cStemX+8},${cStemEnd+21} ${cStemX+1},${cStemEnd+24}`
+                      : `M${cStemX},${cStemEnd-9} C${cStemX+9},${cStemEnd-14} ${cStemX+8},${cStemEnd-21} ${cStemX+1},${cStemEnd-24}`}
+                    stroke={NOTE_BLACK} strokeWidth={1.5} fill="none" />
                 </>
               )}
             </g>
@@ -1300,6 +1340,23 @@ function SelectedNotePanel({
           onChange={(e) => onEdit({ is_rest: e.target.checked })} />
         Rest
       </label>
+      {!note.is_rest && (
+        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ color: "#475569" }}>Stem:</span>
+          {(["up", "down", null] as const).map((v) => (
+            <button key={String(v)} type="button"
+              onClick={() => onEdit({ stem_direction: v })}
+              style={{
+                padding: "2px 8px", borderRadius: 4, fontSize: 11, cursor: "pointer",
+                border: "1px solid #93c5fd",
+                background: (note.stem_direction ?? null) === v ? "#bfdbfe" : "transparent",
+                color: "#1e40af", fontWeight: (note.stem_direction ?? null) === v ? 700 : 400,
+              }}>
+              {v === "up" ? "↑ Up" : v === "down" ? "↓ Down" : "Auto"}
+            </button>
+          ))}
+        </span>
+      )}
       <button type="button" onClick={onDelete}
         style={{ padding: "3px 10px", borderRadius: 4, border: "none",
                  background: "#ef4444", color: "white", cursor: "pointer",
@@ -1464,6 +1521,32 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
     if (selMid !== null && selNi !== null) {
       changeNotes(selMid, (localNotes[selMid] ?? []).filter((_, i) => i !== selNi));
       setSelMid(null); setSelNi(null);
+    }
+  }
+
+  // ── Flip stem direction of selected notes ─────────────────────────────────
+  function flipStem(dir: "up" | "down") {
+    const hasMul = Object.values(multiSelMap).some((s) => s.size > 0);
+    if (hasMul) {
+      history.set((prev) => {
+        const next = { ...prev };
+        for (const [midStr, idxSet] of Object.entries(multiSelMap)) {
+          const mid  = Number(midStr);
+          const orig = prev[mid] ?? [];
+          next[mid]  = orig.map((n, i) => idxSet.has(i) ? { ...n, stem_direction: dir } : n);
+        }
+        return next;
+      });
+      setDirty((p) => {
+        const next = { ...p };
+        for (const midStr of Object.keys(multiSelMap)) next[Number(midStr)] = true;
+        return next;
+      });
+      return;
+    }
+    // Single selection fallback
+    if (selMid !== null && selNi !== null) {
+      changeNotes(selMid, (localNotes[selMid] ?? []).map((n, i) => i === selNi ? { ...n, stem_direction: dir } : n));
     }
   }
 
@@ -1650,6 +1733,7 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
               pitch: n.pitch,
               duration: n.notation_duration ?? n.duration,
               is_rest: n.is_rest,
+              stem_direction: n.stem_direction ?? null,
             })),
           }),
         }
@@ -1760,6 +1844,22 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
                      background: "transparent", color: "#7c3aed", fontSize: 11, cursor: "pointer" }}>
             Deselect all
           </button>
+        )}
+        {(multiSelCount > 0 || (selNote && !selNote.is_rest)) && (
+          <>
+            <button type="button" onClick={() => flipStem("up")}
+              title="Force stems up"
+              style={{ padding: "3px 10px", borderRadius: 4, border: "1px solid #38bdf8",
+                       background: "transparent", color: "#0ea5e9", fontSize: 11, cursor: "pointer" }}>
+              ↑ Stem Up
+            </button>
+            <button type="button" onClick={() => flipStem("down")}
+              title="Force stems down"
+              style={{ padding: "3px 10px", borderRadius: 4, border: "1px solid #38bdf8",
+                       background: "transparent", color: "#0ea5e9", fontSize: 11, cursor: "pointer" }}>
+              ↓ Stem Down
+            </button>
+          </>
         )}
         {multiSelCount > 0 && (
           <button type="button" onClick={deleteSelected}
@@ -1876,6 +1976,33 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
               {multiSelCount} note{multiSelCount !== 1 ? "s" : ""} selected
             </div>
           )}
+          <button
+            type="button"
+            style={{
+              display: "block", width: "100%", textAlign: "left",
+              padding: "8px 14px", background: "none", border: "none",
+              color: "#7dd3fc", cursor: "pointer", fontSize: 12,
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "#1a2a3a")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+            onClick={() => { flipStem("up"); setCtxMenu(null); }}
+          >
+            ↑ Stem Up
+          </button>
+          <button
+            type="button"
+            style={{
+              display: "block", width: "100%", textAlign: "left",
+              padding: "8px 14px", background: "none", border: "none",
+              color: "#7dd3fc", cursor: "pointer", fontSize: 12,
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "#1a2a3a")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+            onClick={() => { flipStem("down"); setCtxMenu(null); }}
+          >
+            ↓ Stem Down
+          </button>
+          <div style={{ borderTop: "1px solid #2a2d4a", margin: "2px 0" }} />
           <button
             type="button"
             style={{

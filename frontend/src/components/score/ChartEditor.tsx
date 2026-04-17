@@ -20,6 +20,8 @@ export type ChartNote = {
   notation_position: number | null;
   /** Quantized symbolic duration for score rendering. Falls back to duration when null. */
   notation_duration: string | null;
+  /** User-overridden stem direction. null / undefined = auto (computed from pitch). */
+  stem_direction?: "up" | "down" | null;
 };
 
 export type ChartMeasure = {
