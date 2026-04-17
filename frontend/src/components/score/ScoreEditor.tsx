@@ -231,10 +231,12 @@ interface NHProps {
   duration: string; isRest: boolean;
   selected: boolean; acc: string;
   dir: "up" | "down"; slots: number; slotW: number;
-  beamed?: boolean; // when true, flags are suppressed (beam drawn by parent)
+  beamed?: boolean;          // when true, flags are suppressed (beam drawn by parent)
+  suppressStem?: boolean;    // when true, stem + flags omitted (chord stem drawn by parent)
+  stemEndOverride?: number;  // when set, stem is drawn to this Y instead of cy ± STEM_LEN
 }
 
-function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, beamed = false }: NHProps) {
+function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, beamed = false, suppressStem = false, stemEndOverride }: NHProps) {
   const isDotted = duration.startsWith("dotted-");
   const baseDur  = isDotted ? duration.slice(7) : duration; // "dotted-quarter" → "quarter"
   const rx     = ROW_H * 0.68;
@@ -242,7 +244,7 @@ function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, 
   const filled = baseDur !== "whole" && baseDur !== "half";
   const stemUp = dir === "up";
   const stemX  = stemUp ? cx + rx - 1 : cx - rx + 1;
-  const stemEnd = stemUp ? cy - STEM_LEN : cy + STEM_LEN;
+  const stemEnd = stemEndOverride ?? (stemUp ? cy - STEM_LEN : cy + STEM_LEN);
   const s = selected ? SEL_BLUE : NOTE_BLACK;
 
   if (isRest) {
@@ -354,18 +356,18 @@ function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, 
         <rect x={cx - rx - 3} y={cy - ry - 3} width={(rx + 3) * 2} height={(ry + 3) * 2}
           fill="none" stroke={SEL_BLUE} strokeWidth={1.5} rx={3} />
       )}
-      {baseDur !== "whole" && (
+      {baseDur !== "whole" && !suppressStem && (
         <line x1={stemX} y1={cy} x2={stemX} y2={stemEnd}
           stroke={NOTE_BLACK} strokeWidth={1.2} />
       )}
-      {!beamed && baseDur === "eighth" && (
+      {!beamed && !suppressStem && baseDur === "eighth" && (
         <path
           d={stemUp
             ? `M${stemX},${stemEnd} C${stemX+9},${stemEnd+5} ${stemX+8},${stemEnd+12} ${stemX+1},${stemEnd+16}`
             : `M${stemX},${stemEnd} C${stemX+9},${stemEnd-5} ${stemX+8},${stemEnd-12} ${stemX+1},${stemEnd-16}`}
           stroke={NOTE_BLACK} strokeWidth={1.3} fill="none" />
       )}
-      {!beamed && baseDur === "16th" && (
+      {!beamed && !suppressStem && baseDur === "16th" && (
         <>
           <path
             d={stemUp
@@ -515,6 +517,17 @@ interface LassoState {
   x1:   number; y1: number; // SVG-space current corner
 }
 
+// ─── Drag-to-move state ──────────────────────────────────────────────────────
+
+interface DragState {
+  ni:         number;   // index of primary dragged note
+  startX:     number;   // SVG-space X where drag started
+  startY:     number;   // SVG-space Y where drag started
+  isDragging: boolean;  // true once movement threshold exceeded (4 px)
+  curSlot:    number;   // current snapped target slot (primary note)
+  curRow:     number;   // current snapped target row (primary note)
+}
+
 interface MeasurePanelProps {
   sm:             SysMeasure;
   tool:           ToolState;
@@ -540,17 +553,22 @@ interface MeasurePanelProps {
   onLassoStart:   (x: number, y: number) => void;
   onLassoMove:    (x: number, y: number) => void;
   onLassoEnd:     () => void;
+  onDragCommit:   (ni: number, deltaSlot: number, deltaRow: number) => void;
 }
 
 function MeasurePanel({
   sm, tool, totalSlots, measureW, timeSig, isFocused, hoverZoom,
   selMeasure, selNote, multiSel, lasso, hoverSlot, hoverRow,
   onHoverChange, onNoteClick, onNoteDouble, onNoteCtxMenu, onBgCtxMenu, onPlace,
-  onLassoStart, onLassoMove, onLassoEnd,
+  onLassoStart, onLassoMove, onLassoEnd, onDragCommit,
 }: MeasurePanelProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const slotW  = measureW / totalSlots;
   const scale  = isFocused ? hoverZoom : 1;
+  // Drag-to-move local state
+  const [drag, setDrag] = useState<DragState | null>(null);
+  // Prevents click-to-select from firing immediately after a drag completes
+  const justDraggedRef = useRef(false);
 
   const internalHover = hoverSlot !== null && hoverRow !== null
     ? { slot: hoverSlot, row: hoverRow } : null;
@@ -569,6 +587,7 @@ function MeasurePanel({
     sel: boolean;
     dir: "up" | "down";
     stemX: number; stemEnd: number;
+    inChord: boolean; // true when this note shares its slot with another note
   };
 
   const noteData: NoteRenderInfo[] = sm.notes.map((note, ni) => {
@@ -589,6 +608,7 @@ function MeasurePanel({
       ac: accSign(note.pitch), leds: ledgerYs(di),
       sel: (selMeasure === sm.measure.id && selNote === ni) || multiSel.has(ni),
       dir, stemX, stemEnd,
+      inChord: false,
     };
   });
 
@@ -601,6 +621,143 @@ function MeasurePanel({
       g.push(info);
       beamGroupMap.set(br.groupId, g);
     }
+  });
+
+  // ── Chord detection (notes sharing the same slot form a chord) ────────────
+  // Group non-rest notes by slot. Any slot with ≥2 notes is a chord.
+  // We mutate dir / stemX / stemEnd on each member so the beam pass sees
+  // the correct shared-stem geometry automatically.
+  const chordSlotMap = new Map<number, number[]>(); // slot → noteData indices
+  noteData.forEach((info, i) => {
+    if (info.note.is_rest) return;
+    const arr = chordSlotMap.get(info.slot) ?? [];
+    arr.push(i);
+    chordSlotMap.set(info.slot, arr);
+  });
+
+  const chordGroupMap = new Map<number, NoteRenderInfo[]>();
+  let chordIdSeq = 0;
+  const rx_ = ROW_H * 0.68; // notehead half-width (matches NoteHead internals)
+  chordSlotMap.forEach((indices) => {
+    if (indices.length < 2) return;
+    const group = indices.map((i) => noteData[i]!);
+    // Chord stem direction: based on average pitch row (same rule as single notes)
+    const avgDi = group.reduce((s, n) => s + n.di, 0) / group.length;
+    const chordDir: "up" | "down" = avgDi >= B4_DROW ? "up" : "down";
+    // Outermost noteheads for stem extent
+    const sortedByCy = [...group].sort((a, b) => a.cy - b.cy); // top (low cy) first
+    const topNote = sortedByCy[0]!;  // highest pitch
+    const botNote = sortedByCy[sortedByCy.length - 1]!; // lowest pitch
+    const sharedStemX = chordDir === "up" ? botNote.cx + rx_ - 1 : topNote.cx - rx_ + 1;
+    // Tip: STEM_LEN past the innermost note in the stem direction
+    const sharedStemEnd = chordDir === "up"
+      ? topNote.cy - STEM_LEN   // stem goes up past highest note
+      : botNote.cy + STEM_LEN;  // stem goes down past lowest note
+    // Propagate shared geometry so beams see consistent stemX / stemEnd
+    group.forEach((info) => {
+      info.inChord    = true;
+      info.dir        = chordDir;
+      info.stemX      = sharedStemX;
+      info.stemEnd    = sharedStemEnd;
+    });
+    chordGroupMap.set(chordIdSeq++, group);
+  });
+
+  // ── Slanted beam geometry ─────────────────────────────────────────────────
+  // Standard engraving rule: the beam is a slanted line from the first stem
+  // tip to the last (clamped to ±2 staff rows so extreme intervals look good).
+  // Each stem's end is updated to the exact Y where it meets that line, so
+  // gaps and overshoots are impossible by construction.
+  // Chords contribute ONE stemX per beat; the note with the most-extreme
+  // natural stemEnd is used as the anchor for the slope calculation.
+
+  type BeamGeo = {
+    x1: number; y1: number;
+    x2: number; y2: number;
+    beamH: number;
+    dir: "up" | "down";
+    secondarySegs: { sx1: number; sy1: number; sx2: number; sy2: number }[];
+  };
+
+  const beamGeoMap = new Map<number, BeamGeo>();
+  const _base  = (d: string) => d.startsWith("dotted-") ? d.slice(7) : d;
+  const _is16  = (d: string) => _base(d) === "16th";
+  const _stubW = ROW_H * 0.65;
+
+  beamGroupMap.forEach((group, gid) => {
+    if (group.length < 2) return;
+    const dir = group[0]!.dir;
+
+    // One representative per unique stemX (chords share an X).
+    // Keep the note whose natural stemEnd is furthest from the noteheads.
+    const byX = new Map<number, NoteRenderInfo>();
+    group.forEach((info) => {
+      const existing = byX.get(info.stemX);
+      if (!existing) { byX.set(info.stemX, info); return; }
+      const replace = dir === "up"
+        ? info.stemEnd < existing.stemEnd   // smaller Y = higher tip (stem-up)
+        : info.stemEnd > existing.stemEnd;  // larger  Y = lower  tip (stem-down)
+      if (replace) byX.set(info.stemX, info);
+    });
+
+    const sorted = [...byX.values()].sort((a, b) => a.stemX - b.stemX);
+    if (sorted.length < 2) return;
+
+    const x1    = sorted[0]!.stemX;
+    const x2    = sorted[sorted.length - 1]!.stemX;
+    const rawY1 = sorted[0]!.stemEnd;
+    const rawY2 = sorted[sorted.length - 1]!.stemEnd;
+
+    // Clamp slope to ±2 staff rows
+    const maxSlant = ROW_H * 2;
+    const y1 = rawY1;
+    const y2 = rawY1 + Math.max(-maxSlant, Math.min(maxSlant, rawY2 - rawY1));
+    const span = x2 - x1 || 1;
+    const beamAtX = (x: number) => y1 + (y2 - y1) * (x - x1) / span;
+
+    // Write each note's exact beam-meeting Y back so stems and chord stems
+    // both terminate precisely on the beam line.
+    group.forEach((info) => { info.stemEnd = beamAtX(info.stemX); });
+
+    const beamH     = ROW_H * 0.5;
+    const gap2      = beamH + 2;
+    const gapOffset = dir === "up" ? gap2 : -gap2;
+
+    // Secondary beam segments — de-dup notes by slot, then apply beam rules.
+    const allBySlot: NoteRenderInfo[] = [];
+    const seenSlots = new Set<number>();
+    [...group].sort((a, b) => a.slot - b.slot).forEach((info) => {
+      if (!seenSlots.has(info.slot)) { allBySlot.push(info); seenSlots.add(info.slot); }
+    });
+
+    const secondarySegs: { sx1: number; sy1: number; sx2: number; sy2: number }[] = [];
+    const hasLeft  = new Set<number>();
+    const hasRight = new Set<number>();
+
+    for (let k = 0; k < allBySlot.length - 1; k++) {
+      const a = allBySlot[k]!;
+      const b = allBySlot[k + 1]!;
+      if (_is16(a.dur) && _is16(b.dur)) {
+        const sx1 = Math.min(a.stemX, b.stemX);
+        const sx2 = Math.max(a.stemX, b.stemX);
+        secondarySegs.push({ sx1, sy1: beamAtX(sx1) + gapOffset, sx2, sy2: beamAtX(sx2) + gapOffset });
+        hasRight.add(k);
+        hasLeft.add(k + 1);
+      }
+    }
+
+    // Stubs for isolated 16ths (no 16th neighbour on either side)
+    for (let k = 0; k < allBySlot.length; k++) {
+      const n = allBySlot[k]!;
+      if (!_is16(n.dur) || hasLeft.has(k) || hasRight.has(k)) continue;
+      if (k > 0) {
+        secondarySegs.push({ sx1: n.stemX - _stubW, sy1: beamAtX(n.stemX - _stubW) + gapOffset, sx2: n.stemX, sy2: beamAtX(n.stemX) + gapOffset });
+      } else if (k < allBySlot.length - 1) {
+        secondarySegs.push({ sx1: n.stemX, sy1: beamAtX(n.stemX) + gapOffset, sx2: n.stemX + _stubW, sy2: beamAtX(n.stemX + _stubW) + gapOffset });
+      }
+    }
+
+    beamGeoMap.set(gid, { x1, y1, x2, y2, beamH, dir, secondarySegs });
   });
 
   function getCell(e: React.MouseEvent<SVGSVGElement>) {
@@ -635,6 +792,25 @@ function MeasurePanel({
     : false;
 
   function onMouseMove(e: React.MouseEvent<SVGSVGElement>) {
+    // ── Drag-to-move ────────────────────────────────────────────
+    if (drag) {
+      const svg = svgRef.current;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      const svgX = (e.clientX - rect.left) / scale;
+      const svgY = (e.clientY - rect.top)  / scale;
+      const isDragging = drag.isDragging || Math.hypot(svgX - drag.startX, svgY - drag.startY) > 4;
+      const origNote = sm.notes[drag.ni];
+      const dur   = origNote ? (origNote.notation_duration ?? origNote.duration) : "quarter";
+      const durSl = DURATION_SLOTS[dur] ?? 4;
+      const rawSlot = Math.floor(svgX / slotW);
+      const rawRow  = Math.floor(svgY / ROW_H);
+      const snappedSlot = Math.max(0, Math.min(totalSlots - durSl, snapSlot(rawSlot, dur)));
+      const snappedRow  = Math.max(0, Math.min(D_TOTAL - 1, rawRow));
+      setDrag({ ...drag, isDragging, curSlot: snappedSlot, curRow: snappedRow });
+      onHoverChange(null, null);
+      return;
+    }
     const c = getCell(e);
     if (!c) { onHoverChange(null, null); return; }
     // If lasso drag is active, update its corner
@@ -651,7 +827,10 @@ function MeasurePanel({
     // Snap hover ghost to duration grid so the full beat area previews correctly
     onHoverChange(snapSlot(c.slot, effectiveDur(tool)), c.row);
   }
-  function onMouseLeave() { onHoverChange(null, null); }
+  function onMouseLeave() {
+    onHoverChange(null, null);
+    if (drag) setDrag(null); // cancel drag when cursor leaves the measure
+  }
 
   function onMouseDown(e: React.MouseEvent<SVGSVGElement>) {
     if (!tool.selectMode) return;
@@ -665,6 +844,23 @@ function MeasurePanel({
   }
 
   function onMouseUp() {
+    if (drag) {
+      if (drag.isDragging) {
+        const origNote = sm.notes[drag.ni];
+        if (origNote) {
+          const origSlot = origNote.notation_position ?? origNote.position;
+          const origDi   = pitchToDRow(origNote.pitch);
+          const dSlot    = drag.curSlot - origSlot;
+          const dRow     = drag.curRow  - origDi;
+          if (dSlot !== 0 || dRow !== 0) {
+            justDraggedRef.current = true;
+            onDragCommit(drag.ni, dSlot, dRow);
+          }
+        }
+      }
+      setDrag(null);
+      return;
+    }
     if (tool.selectMode) onLassoEnd();
   }
 
@@ -718,7 +914,8 @@ function MeasurePanel({
           display: "block",
           background: "white",
           userSelect: "none",
-          cursor: tool.selectMode
+          cursor: drag?.isDragging ? "grabbing"
+            : tool.selectMode
             ? (lasso ? "crosshair" : "default")
             : internalHover && !hoverOccupied && !hoverOverflows ? "crosshair"
             : hoverOccupied ? "pointer"
@@ -795,16 +992,34 @@ function MeasurePanel({
         })}
 
         {/* ── Notes ────────────────────────────────────────── */}
-        {noteData.map(({ note, ni, cx, cy, dur, durSl, ac, leds, sel, dir }) => {
-          const br     = beamResults[ni];
-          const beamed = br ? br.role !== "none" : false;
-
+        {noteData.map(({ note, ni, cx, cy, dur, durSl, slot, di, ac, leds, sel, dir, inChord, stemEnd }) => {
+          const br        = beamResults[ni];
+          const beamed    = br ? br.role !== "none" : false;
+          const isDragged = drag?.isDragging === true
+            && (ni === drag.ni || (multiSel.has(ni) && multiSel.has(drag.ni)));
           return (
             <g key={`n${note.id}-${ni}`}
-              style={{ cursor: tool.selectMode ? "pointer" : "pointer" }}
-              onClick={(e) => { e.stopPropagation(); onNoteClick(ni); }}
+              style={{
+                cursor:  tool.selectMode ? "grab" : "pointer",
+                opacity: isDragged ? 0.25 : 1,
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (justDraggedRef.current) { justDraggedRef.current = false; return; }
+                onNoteClick(ni);
+              }}
               onDoubleClick={(e) => { e.stopPropagation(); onNoteDouble(ni); }}
               onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onNoteCtxMenu(ni, e.clientX, e.clientY); }}
+              onMouseDown={(e) => {
+                if (!tool.selectMode) return;
+                e.stopPropagation();
+                const svg = svgRef.current;
+                if (!svg) return;
+                const rect = svg.getBoundingClientRect();
+                const svgX = (e.clientX - rect.left) / scale;
+                const svgY = (e.clientY - rect.top)  / scale;
+                setDrag({ ni, startX: svgX, startY: svgY, isDragging: false, curSlot: slot, curRow: di });
+              }}
             >
               {leds.map((ly, li) => (
                 <line key={li}
@@ -814,10 +1029,56 @@ function MeasurePanel({
               <NoteHead cx={cx} cy={cy} duration={dur}
                 isRest={note.is_rest} selected={sel}
                 acc={ac} dir={dir} slots={durSl} slotW={slotW}
-                beamed={beamed} />
+                beamed={beamed} suppressStem={inChord}
+                stemEndOverride={beamed && !inChord ? stemEnd : undefined} />
             </g>
           );
         })}
+
+        {/* ── Drag ghost notes ─────────────────────────────────── */}
+        {drag?.isDragging && (() => {
+          const primaryInfo = noteData[drag.ni];
+          if (!primaryInfo) return null;
+          const deltaSlot = drag.curSlot - primaryInfo.slot;
+          const deltaRow  = drag.curRow  - primaryInfo.di;
+          const toDrag = (multiSel.has(drag.ni) && multiSel.size > 1)
+            ? multiSel : new Set([drag.ni]);
+          return (
+            <>
+              {[...toDrag].map((dni) => {
+                const info = noteData[dni];
+                if (!info) return null;
+                const durSl2  = DURATION_SLOTS[info.dur] ?? 4;
+                const newSlot = Math.max(0, Math.min(totalSlots - durSl2, info.slot + deltaSlot));
+                const newDi   = Math.max(0, Math.min(D_TOTAL - 1, info.di + deltaRow));
+                const ghostCx = newSlot * slotW + slotW / 2;
+                const ghostCy = newDi * ROW_H + ROW_H / 2;
+                const ghostDir = info.note.is_rest ? "up" : noteStemDir(newDi);
+                return (
+                  <g key={`dg-${dni}`} style={{ pointerEvents: "none", opacity: 0.65 }}>
+                    <NoteHead
+                      cx={ghostCx} cy={ghostCy}
+                      duration={info.dur} isRest={info.note.is_rest}
+                      selected={true} acc="" dir={ghostDir}
+                      slots={durSl2} slotW={slotW}
+                    />
+                  </g>
+                );
+              })}
+              {D_ROWS[drag.curRow] && (
+                <text
+                  x={drag.curSlot * slotW + slotW / 2}
+                  y={Math.max(STAFF_TOP - 5, drag.curRow * ROW_H - 2)}
+                  fontSize={9} fill="#4a6cf7" textAnchor="middle"
+                  fontFamily="sans-serif" fontWeight={700}
+                  style={{ pointerEvents: "none", userSelect: "none" }}
+                >
+                  {D_ROWS[drag.curRow]!.pitch}
+                </text>
+              )}
+            </>
+          );
+        })()}
 
         {/* ── Lasso selection rect ──────────────────────────── */}
         {lasso && (
@@ -829,70 +1090,62 @@ function MeasurePanel({
           />
         )}
 
+        {/* ── Chord stems ───────────────────────────────────── */}
+        {Array.from(chordGroupMap.entries()).map(([cgid, group]) => {
+          // All notes in the group share the same stemX / stemEnd (set in chord pass)
+          const { dir: chordDir, stemX: cStemX, stemEnd: cStemEnd } = group[0]!;
+          // Stem spans from the outer notehead cy to the stem tip
+          const sortedByCy = [...group].sort((a, b) => a.cy - b.cy);
+          const stemY1 = chordDir === "up"
+            ? sortedByCy[sortedByCy.length - 1]!.cy  // bottom (lowest pitch)
+            : sortedByCy[0]!.cy;                      // top (highest pitch)
+          // Flags: only for unbeamed chords (beamed chords get the beam bar instead)
+          const repNote = group[0]!;
+          const isInBeam = group.some((n) => (beamResults[n.ni]?.role ?? "none") !== "none");
+          const baseDur  = repNote.dur.startsWith("dotted-") ? repNote.dur.slice(7) : repNote.dur;
+          return (
+            <g key={`chord-stem-${cgid}`} style={{ pointerEvents: "none" }}>
+              <line x1={cStemX} y1={stemY1} x2={cStemX} y2={cStemEnd}
+                stroke={NOTE_BLACK} strokeWidth={1.2} />
+              {!isInBeam && baseDur === "eighth" && (
+                <path
+                  d={chordDir === "up"
+                    ? `M${cStemX},${cStemEnd} C${cStemX+9},${cStemEnd+5} ${cStemX+8},${cStemEnd+12} ${cStemX+1},${cStemEnd+16}`
+                    : `M${cStemX},${cStemEnd} C${cStemX+9},${cStemEnd-5} ${cStemX+8},${cStemEnd-12} ${cStemX+1},${cStemEnd-16}`}
+                  stroke={NOTE_BLACK} strokeWidth={1.3} fill="none" />
+              )}
+              {!isInBeam && baseDur === "16th" && (
+                <>
+                  <path
+                    d={chordDir === "up"
+                      ? `M${cStemX},${cStemEnd} C${cStemX+8},${cStemEnd+4} ${cStemX+7},${cStemEnd+10} ${cStemX+1},${cStemEnd+13}`
+                      : `M${cStemX},${cStemEnd} C${cStemX+8},${cStemEnd-4} ${cStemX+7},${cStemEnd-10} ${cStemX+1},${cStemEnd-13}`}
+                    stroke={NOTE_BLACK} strokeWidth={1.3} fill="none" />
+                  <path
+                    d={chordDir === "up"
+                      ? `M${cStemX},${cStemEnd+8} C${cStemX+8},${cStemEnd+12} ${cStemX+7},${cStemEnd+18} ${cStemX+1},${cStemEnd+21}`
+                      : `M${cStemX},${cStemEnd-8} C${cStemX+8},${cStemEnd-12} ${cStemX+7},${cStemEnd-18} ${cStemX+1},${cStemEnd-21}`}
+                    stroke={NOTE_BLACK} strokeWidth={1.3} fill="none" />
+                </>
+              )}
+            </g>
+          );
+        })}
+
         {/* ── Beams ─────────────────────────────────────────── */}
-        {Array.from(beamGroupMap.entries()).map(([gid, group]) => {
-          if (group.length < 2) return null;
-          const dir    = group[0]!.dir;
-          const sorted = [...group].sort((a, b) => a.slot - b.slot);
-          const x1     = sorted[0]!.stemX;
-          const x2     = sorted[sorted.length - 1]!.stemX;
-          const avgEnd = sorted.reduce((s, n) => s + n.stemEnd, 0) / sorted.length;
-          const beamH  = ROW_H * 0.38;
-          // Centre primary beam rect on average stem-tip Y
-          const beamY  = avgEnd - beamH / 2;
-          const bx     = Math.min(x1, x2);
-          const bw     = Math.max(1, Math.abs(x2 - x1));
-          const gap2   = beamH + 2;
-          const beam2Y = dir === "up" ? beamY + gap2 : beamY - gap2;
-          // Stub width for isolated 16th notes (no 16th neighbour)
-          const stubW  = ROW_H * 0.65;
-          // Helper: strip "dotted-" prefix to get base duration
-          const base   = (d: string) => d.startsWith("dotted-") ? d.slice(7) : d;
-          const is16   = (d: string) => base(d) === "16th";
-
-          // ── Secondary beam segments ──────────────────────────────────────
-          // Rule 1: full segment between every consecutive 16th–16th pair.
-          // Rule 2: stub on a 16th that has no 16th neighbour on either side
-          //         (the classic dotted-eighth + 16th pattern).
-          //         Stub extends toward its nearest neighbour.
-          const secondarySegs: { x: number; w: number }[] = [];
-          const hasLeft  = new Set<number>(); // sorted-index already has a secondary beam to its left
-          const hasRight = new Set<number>(); // sorted-index already has a secondary beam to its right
-
-          for (let k = 0; k < sorted.length - 1; k++) {
-            const a = sorted[k]!;
-            const b = sorted[k + 1]!;
-            if (is16(a.dur) && is16(b.dur)) {
-              const sx = Math.min(a.stemX, b.stemX);
-              const sw = Math.abs(b.stemX - a.stemX);
-              secondarySegs.push({ x: sx, w: sw });
-              hasRight.add(k);
-              hasLeft.add(k + 1);
-            }
-          }
-
-          // Stubs for isolated 16ths (no full secondary on either side)
-          for (let k = 0; k < sorted.length; k++) {
-            const n = sorted[k]!;
-            if (!is16(n.dur)) continue;
-            if (hasLeft.has(k) || hasRight.has(k)) continue; // already connected
-            // Draw stub toward the nearest neighbour
-            if (k > 0) {
-              // Stub going left (toward sorted[k-1])
-              secondarySegs.push({ x: n.stemX - stubW, w: stubW });
-            } else if (k < sorted.length - 1) {
-              // Stub going right (toward sorted[k+1])
-              secondarySegs.push({ x: n.stemX, w: stubW });
-            }
-          }
-
+        {Array.from(beamGeoMap.entries()).map(([gid, geo]) => {
+          const { x1, y1, x2, y2, beamH, secondarySegs } = geo;
+          const hb  = beamH / 2;
+          // Slanted beam trapezoid: 4 corners centred on the beam-line Y at each edge
+          const pts = (ax: number, ay: number, bx: number, by: number) =>
+            `${ax},${ay - hb} ${bx},${by - hb} ${bx},${by + hb} ${ax},${ay + hb}`;
           return (
             <g key={`beam-${gid}`} style={{ pointerEvents: "none" }}>
-              {/* Primary beam */}
-              <rect x={bx} y={beamY} width={bw} height={beamH} fill={NOTE_BLACK} />
-              {/* Secondary beam segments (full or stub) */}
+              <polygon points={pts(x1, y1, x2, y2)} fill={NOTE_BLACK} />
               {secondarySegs.map((seg, si) => (
-                <rect key={`b2-${si}`} x={seg.x} y={beam2Y} width={seg.w} height={beamH} fill={NOTE_BLACK} />
+                <polygon key={`b2-${si}`}
+                  points={pts(seg.sx1, seg.sy1, seg.sx2, seg.sy2)}
+                  fill={NOTE_BLACK} />
               ))}
             </g>
           );
@@ -949,13 +1202,14 @@ interface SysProps {
   onLassoStart:   (mid: number, x: number, y: number) => void;
   onLassoMove:    (mid: number, x: number, y: number) => void;
   onLassoEnd:     (mid: number) => void;
+  onDragCommit:   (mid: number, ni: number, deltaSlot: number, deltaRow: number) => void;
 }
 
 function ScoreSystem({
   measures, tool, totalSlots, isFirst, timeSig, clef = "treble",
   measureW, hoverZoom, selMeasure, selNote, multiSelMap, lassoMap,
   hover, onHover, onNoteClick, onNoteDouble, onNoteCtxMenu, onBgCtxMenu, onPlace,
-  onLassoStart, onLassoMove, onLassoEnd,
+  onLassoStart, onLassoMove, onLassoEnd, onDragCommit,
 }: SysProps) {
   return (
     <div style={{ display: "flex", alignItems: "flex-end", lineHeight: 0 }}>
@@ -992,6 +1246,7 @@ function ScoreSystem({
             onLassoStart={(x, y) => onLassoStart(sm.measure.id, x, y)}
             onLassoMove={(x, y) => onLassoMove(sm.measure.id, x, y)}
             onLassoEnd={() => onLassoEnd(sm.measure.id)}
+            onDragCommit={(ni, dSlot, dRow) => onDragCommit(sm.measure.id, ni, dSlot, dRow)}
           />
         );
       })}
@@ -1336,6 +1591,32 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
     setLassoMap({});
   }
 
+  // ── Drag-to-move commit ────────────────────────────────────────────────────
+  function handleDragCommit(mid: number, ni: number, deltaSlot: number, deltaRow: number) {
+    const notes = localNotes[mid] ?? [];
+    // If the dragged note is part of a multi-select, move all selected notes
+    // by the same delta; otherwise move only the single dragged note.
+    const toMove = (multiSelMap[mid]?.has(ni) && (multiSelMap[mid]?.size ?? 0) > 1)
+      ? multiSelMap[mid]!
+      : new Set([ni]);
+    const updated = notes.map((note, idx) => {
+      if (!toMove.has(idx)) return note;
+      const dur    = note.notation_duration ?? note.duration;
+      const durSl  = DURATION_SLOTS[dur] ?? 4;
+      const origSlot = note.notation_position ?? note.position;
+      const newSlot  = Math.max(0, Math.min(totalSlots - durSl, origSlot + deltaSlot));
+      if (note.is_rest) {
+        // Rests have no pitch row — only move horizontally
+        return { ...note, notation_position: newSlot, position: newSlot };
+      }
+      const origDi   = pitchToDRow(note.pitch);
+      const newDi    = Math.max(0, Math.min(D_TOTAL - 1, origDi + deltaRow));
+      const newPitch = D_ROWS[newDi]?.pitch ?? note.pitch;
+      return { ...note, notation_position: newSlot, position: newSlot, pitch: newPitch };
+    });
+    changeNotes(mid, updated);
+  }
+
   async function handleTimeSigChange(ts: string) {
     setTimeSig(ts);
     try {
@@ -1516,7 +1797,7 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
 
       <p style={{ fontSize: 11, color: "#94a3b8", margin: "2px 0 8px" }}>
         {tool.selectMode
-          ? "Select mode: click notes to multi-select · drag to lasso · Delete key removes selected · Escape clears · Ctrl+A selects all in measure"
+          ? "Select mode: click to select · drag a note to move it (pitch + position) · drag empty area to lasso · Delete removes · Ctrl+A selects all in measure"
           : "Note mode: click staff to place · click note to select · click again or double-click to delete · right-click for options"}
       </p>
 
@@ -1562,6 +1843,7 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
                 onLassoStart={handleLassoStart}
                 onLassoMove={handleLassoMove}
                 onLassoEnd={handleLassoEnd}
+                onDragCommit={handleDragCommit}
               />
             </div>
           ))}
