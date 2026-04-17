@@ -16,6 +16,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { apiFetch } from "@/components/api";
 import { computeBeaming } from "@/lib/beaming";
+import { useHistory } from "@/lib/useHistory";
 import type { Chart, ChartMeasure, ChartNote } from "./ChartEditor";
 import NoteEditorToolbar, {
   DEFAULT_TOOL,
@@ -1072,9 +1073,11 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
 
   const [settings,   setSettings]   = useState<ScoreSettingsValues>(DEFAULT_SCORE_SETTINGS);
   const [tool,       setTool]       = useState<ToolState>(DEFAULT_TOOL);
-  const [localNotes, setLocalNotes] = useState<Record<number, ChartNote[]>>(() =>
+  const history = useHistory<Record<number, ChartNote[]>>(
     Object.fromEntries(chart.measures.map((m) => [m.id, m.notes]))
   );
+  // Alias for ergonomic reads everywhere in the component
+  const localNotes = history.notes;
   const [dirty,   setDirty]   = useState<Record<number, boolean>>({});
   const [saving,  setSaving]  = useState<Record<number, boolean>>({});
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
@@ -1099,7 +1102,7 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
 
   useEffect(() => {
     setTimeSig(chart.time_sig);
-    setLocalNotes(Object.fromEntries(chart.measures.map((m) => [m.id, m.notes])));
+    history.reset(Object.fromEntries(chart.measures.map((m) => [m.id, m.notes])));
     setDirty({});
     setSelMid(null); setSelNi(null);
     setMultiSelMap({});
@@ -1118,6 +1121,24 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         deleteSelected();
+      }
+
+      // Ctrl+Z — undo
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === "z") {
+        e.preventDefault();
+        history.undo();
+        // Mark all measures dirty so user is prompted to save after undo
+        setDirty(Object.fromEntries(chart.measures.map((m) => [m.id, true])));
+      }
+
+      // Ctrl+Y / Ctrl+Shift+Z — redo
+      if (
+        ((e.ctrlKey || e.metaKey) && e.key === "y") ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "z")
+      ) {
+        e.preventDefault();
+        history.redo();
+        setDirty(Object.fromEntries(chart.measures.map((m) => [m.id, true])));
       }
 
       // Escape — deselect all
@@ -1155,16 +1176,18 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
   }, [ctxMenu]);
 
   const changeNotes = useCallback((mid: number, notes: ChartNote[]) => {
-    setLocalNotes((p) => ({ ...p, [mid]: notes }));
+    history.set((p) => ({ ...p, [mid]: notes }));
     setDirty((p) => ({ ...p, [mid]: true }));
-  }, []);
+  // history.set is a stable useCallback — safe to include
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [history.set]);
 
   // ── Delete selected notes (single or multi) ────────────────────────────────
   function deleteSelected() {
     // Multi-select takes priority
     const hasMul = Object.values(multiSelMap).some((s) => s.size > 0);
     if (hasMul) {
-      setLocalNotes((prev) => {
+      history.set((prev) => {
         const next = { ...prev };
         for (const [midStr, idxSet] of Object.entries(multiSelMap)) {
           const mid  = Number(midStr);
@@ -1351,7 +1374,9 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
         }
       );
       const saved = updated.measures.find((m) => m.id === mid);
-      if (saved) setLocalNotes((p) => ({ ...p, [mid]: saved.notes }));
+      // replace: update present without pushing to undo stack
+      // (server-assigned IDs shouldn't create an undo entry)
+      if (saved) history.replace((p) => ({ ...p, [mid]: saved.notes }));
       setDirty((p) => ({ ...p, [mid]: false }));
       setMessage({ type: "ok", text: "Saved." });
       onSaved(updated);
@@ -1409,6 +1434,43 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
             {multiSelCount} note{multiSelCount !== 1 ? "s" : ""} selected
           </span>
         )}
+        {/* ── Undo / Redo buttons ── */}
+        <button
+          type="button"
+          title="Undo (Ctrl+Z)"
+          disabled={!history.canUndo}
+          onClick={() => {
+            history.undo();
+            setDirty(Object.fromEntries(chart.measures.map((m) => [m.id, true])));
+          }}
+          style={{
+            padding: "3px 8px", borderRadius: 4, border: "1px solid #2a2d4a",
+            background: history.canUndo ? "#20213a" : "transparent",
+            color: history.canUndo ? "#a9b1d6" : "#3a3e5a",
+            cursor: history.canUndo ? "pointer" : "not-allowed",
+            fontSize: 12, fontWeight: 600, userSelect: "none",
+          }}
+        >
+          ↩ Undo
+        </button>
+        <button
+          type="button"
+          title="Redo (Ctrl+Y)"
+          disabled={!history.canRedo}
+          onClick={() => {
+            history.redo();
+            setDirty(Object.fromEntries(chart.measures.map((m) => [m.id, true])));
+          }}
+          style={{
+            padding: "3px 8px", borderRadius: 4, border: "1px solid #2a2d4a",
+            background: history.canRedo ? "#20213a" : "transparent",
+            color: history.canRedo ? "#a9b1d6" : "#3a3e5a",
+            cursor: history.canRedo ? "pointer" : "not-allowed",
+            fontSize: 12, fontWeight: 600, userSelect: "none",
+          }}
+        >
+          ↪ Redo
+        </button>
         <span style={{ flex: 1 }} />
         {multiSelCount > 0 && (
           <button type="button"
