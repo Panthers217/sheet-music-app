@@ -143,9 +143,10 @@ const ALL_ROWS = buildAllRows();
 const ALL_IDX: Record<string, number> = {};
 ALL_ROWS.forEach((r, i) => { ALL_IDX[r.pitch] = i; });
 
-// Display range: A5 (2 above top line) → C4 (middle C) = 13 rows
-const D_TOP   = "A5";
-const D_BOT   = "C4";
+// Display range: D6 (4 above top line F5) → A3 (4 below bottom line E4) = 18 rows
+// Extra rows above and below give stem clearance without relying on SVG overflow alone.
+const D_TOP   = "D6";
+const D_BOT   = "A3";
 const D_START = ALL_IDX[D_TOP] ?? 0;
 const D_END   = ALL_IDX[D_BOT] ?? ALL_ROWS.length - 1;
 const D_ROWS  = ALL_ROWS.slice(D_START, D_END + 1);
@@ -157,7 +158,7 @@ D_ROWS.forEach((r, i) => { D_IDX[r.pitch] = i; });
 const LINE_DIDXS = D_ROWS
   .map((r, i) => ({ r, i }))
   .filter(({ r }) => TREBLE_LINES.has(r.pitch))
-  .map(({ i }) => i);                        // indices [2,4,6,8,10]
+  .map(({ i }) => i);                        // indices with extended range
 
 // ─── Fixed layout constants (staff geometry, not affected by zoom) ────────────
 
@@ -173,6 +174,9 @@ const LINE_YS   = LINE_DIDXS.map((i) => i * ROW_H + ROW_H / 2);
 const STAFF_TOP = LINE_YS[0]  ?? 0;
 const STAFF_BOT = LINE_YS[LINE_YS.length - 1] ?? ROW_H;
 const SVG_H     = D_TOTAL * ROW_H;          // total SVG height
+// Vertical padding added around each measure/clef SVG so stems on extreme notes
+// paint within the wrapper div bounds rather than overflowing the layout.
+const SVG_PAD   = STEM_LEN;
 
 // Second staff line from top (D5) — where whole/half rests hang
 const REST_LINE_Y = LINE_YS[1] ?? 0;
@@ -203,7 +207,7 @@ const NOTE_BLACK = "#1a1a1a";
 const SEL_BLUE   = "#1d4ed8";
 
 // Below or on B4 → stem UP; above B4 → stem DOWN
-const B4_DROW = D_IDX["B4"] ?? 6;
+const B4_DROW = D_IDX["B4"] ?? 9;
 function noteStemDir(di: number): "up" | "down" {
   return di >= B4_DROW ? "up" : "down";
 }
@@ -450,9 +454,11 @@ function ClefPanel({ isFirst, timeSig, clef = "treble" }: {
   const tsBotY = STAFF_TOP + halfH * 1.5;
 
   return (
+    <div style={{ display: "block", flexShrink: 0,
+                  paddingTop: SVG_PAD, paddingBottom: SVG_PAD }}>
     <svg width={clefW} height={SVG_H}
       overflow="visible"
-      style={{ display: "block", flexShrink: 0, background: "white" }}>
+      style={{ display: "block", background: "white" }}>
       {/* Staff lines */}
       {LINE_YS.map((y, li) => (
         <line key={li} x1={0} y1={y} x2={clefW} y2={y}
@@ -477,6 +483,7 @@ function ClefPanel({ isFirst, timeSig, clef = "treble" }: {
             {tsTop}
           </text>
           <text x={tsX} y={tsBotY}
+
             fontSize={tsFz} fill="#1a1a1a" textAnchor="middle"
             dominantBaseline="central" fontFamily="serif"
             style={{ userSelect: "none", pointerEvents: "none" }}>
@@ -485,6 +492,7 @@ function ClefPanel({ isFirst, timeSig, clef = "treble" }: {
         </>
       )}
     </svg>
+    </div>
   );
 }
 
@@ -937,6 +945,9 @@ function MeasurePanel({
       position:        "relative",
       display:         "inline-block",
       flexShrink:      0,
+      // Vertical padding reserves room for stems/noteheads that extend beyond SVG bounds
+      paddingTop:      SVG_PAD,
+      paddingBottom:   SVG_PAD,
       // Scale up on focus; origin anchored to the staff centre-bottom
       transform:       isFocused ? `scale(${hoverZoom})` : "scale(1)",
       transformOrigin: "50% 55%",
@@ -950,6 +961,7 @@ function MeasurePanel({
         ref={svgRef}
         width={measureW}
         height={SVG_H}
+        overflow="visible"
         style={{
           display: "block",
           background: "white",
