@@ -274,18 +274,29 @@ function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, 
     //   but the glyph hangs with yMin=1.168sp so nudge: baseline = LINE_YS[1] + 0.4*staffSpace
     // half: sit on 3rd line (LINE_YS[2]) — yMin=1.592sp means glyph top is 2.056sp
     //   baseline at STAFF_BOT - 1.592sp * staffSpace ≈ LINE_YS[3]
-    // quarter/eighth/16th: glyph covers ~2.0–2.8sp, center vertically in staff
-    //   place baseline at LINE_YS[4] (bottom staff line) + small offset
+    // quarter/eighth/16th: all centered on the 3rd space (between D5 and B4, center y=77)
+    //   baseline = space3CenterY + (yMin+yMax)/2 * staffSpace
+    //     quarter E4E5: (0.400+2.792)/2 = 1.596sp → baseline = 77 + 44.7 ≈ 122
+    //     eighth  E4E6: (0.796+2.156)/2 = 1.476sp → baseline = 77 + 41.3 ≈ 118
+    //     16th    E4E7: (0.000+2.172)/2 = 1.086sp → baseline = 77 + 30.4 ≈ 107
+    const space3CenterY = Math.round((LINE_YS[1]! + LINE_YS[2]!) / 2);
     const restBaselineY =
       baseDur === "whole"   ? LINE_YS[1]! + Math.round(0.40 * staffSpace)
     : baseDur === "half"    ? LINE_YS[3]! - Math.round(0.08 * staffSpace)
-    :                         LINE_YS[4]! + Math.round(0.40 * staffSpace);
+    : baseDur === "quarter" ? space3CenterY + Math.round(1.596 * staffSpace)
+    : baseDur === "eighth"  ? space3CenterY + Math.round(1.476 * staffSpace)
+    :                         space3CenterY + Math.round(1.086 * staffSpace); // 16th
 
-    // Augmentation dot: Bravura U+E1E7, sized at ~0.32sp wide, centered at 1.6sp above bottom
-    // Place it just to the right of the glyph, in the first space above the middle line
+    // Augmentation dot: Bravura U+E1E7 (dotFz = restFz*0.55).
+    // At dotFz, 1sp = 0.55*staffSpace. Dot bBox yMax=0.348sp → center = 0.174sp above baseline.
+    // For quarter/eighth/16th: place dot in 3rd space; baseline = space3CenterY + 0.174*0.55*staffSpace ≈ +3px
+    // For whole/half: use the 4th space (conventional dotted-rest position in treble)
     const dotFz  = Math.round(restFz * 0.55);
     const dotX   = cx + Math.round(0.55 * staffSpace);
-    const dotY   = LINE_YS[2]! + Math.round(0.50 * staffSpace);
+    const dotDotOffset = Math.round(0.174 * 0.55 * staffSpace); // ≈ 3px
+    const dotY   = (baseDur === "quarter" || baseDur === "eighth" || baseDur === "16th")
+      ? space3CenterY + dotDotOffset
+      : LINE_YS[2]! + Math.round(0.50 * staffSpace);
 
     // Selection box: approximate glyph bounds in px for the hit rect
     const selH   = Math.round(2.4 * staffSpace);
@@ -486,27 +497,55 @@ interface SysMeasure {
   saving:  boolean;
 }
 
+// ─── Context menu ─────────────────────────────────────────────────────────────
+
+interface CtxMenu {
+  x:       number;
+  y:       number;
+  mid:     number;
+  noteIdx: number | null; // null = lasso/multi selection context
+}
+
+// ─── Lasso state ──────────────────────────────────────────────────────────────
+
+interface LassoState {
+  mid:  number;
+  x0:   number; y0: number; // SVG-space anchor
+  x1:   number; y1: number; // SVG-space current corner
+}
+
 interface MeasurePanelProps {
-  sm:            SysMeasure;
-  tool:          ToolState;
-  totalSlots:    number;
-  measureW:      number;
-  timeSig:       string;
-  isFocused:     boolean;
-  hoverZoom:     number;
-  selMeasure:    number | null;
-  selNote:       number | null;
-  hoverSlot:     number | null;
-  hoverRow:      number | null;
-  onHoverChange: (slot: number | null, row: number | null) => void;
-  onNoteClick:   (ni: number) => void;
-  onPlace:       (slot: number, row: number) => void;
+  sm:             SysMeasure;
+  tool:           ToolState;
+  totalSlots:     number;
+  measureW:       number;
+  timeSig:        string;
+  isFocused:      boolean;
+  hoverZoom:      number;
+  selMeasure:     number | null;
+  selNote:        number | null;
+  // Multi-select: set of note indices selected in THIS measure
+  multiSel:       Set<number>;
+  // Lasso rect for this measure (SVG-space coords), or null
+  lasso:          { x: number; y: number; w: number; h: number } | null;
+  hoverSlot:      number | null;
+  hoverRow:       number | null;
+  onHoverChange:  (slot: number | null, row: number | null) => void;
+  onNoteClick:    (ni: number) => void;
+  onNoteDouble:   (ni: number) => void;
+  onNoteCtxMenu:  (ni: number, cx: number, cy: number) => void;
+  onBgCtxMenu:    (cx: number, cy: number) => void;
+  onPlace:        (slot: number, row: number) => void;
+  onLassoStart:   (x: number, y: number) => void;
+  onLassoMove:    (x: number, y: number) => void;
+  onLassoEnd:     () => void;
 }
 
 function MeasurePanel({
   sm, tool, totalSlots, measureW, timeSig, isFocused, hoverZoom,
-  selMeasure, selNote, hoverSlot, hoverRow,
-  onHoverChange, onNoteClick, onPlace,
+  selMeasure, selNote, multiSel, lasso, hoverSlot, hoverRow,
+  onHoverChange, onNoteClick, onNoteDouble, onNoteCtxMenu, onBgCtxMenu, onPlace,
+  onLassoStart, onLassoMove, onLassoEnd,
 }: MeasurePanelProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const slotW  = measureW / totalSlots;
@@ -547,7 +586,7 @@ function MeasurePanel({
     return {
       note, ni, di, slot, dur, durSl, cx, cy,
       ac: accSign(note.pitch), leds: ledgerYs(di),
-      sel: selMeasure === sm.measure.id && selNote === ni,
+      sel: (selMeasure === sm.measure.id && selNote === ni) || multiSel.has(ni),
       dir, stemX, stemEnd,
     };
   });
@@ -597,12 +636,39 @@ function MeasurePanel({
   function onMouseMove(e: React.MouseEvent<SVGSVGElement>) {
     const c = getCell(e);
     if (!c) { onHoverChange(null, null); return; }
+    // If lasso drag is active, update its corner
+    if (e.buttons === 1 && tool.selectMode) {
+      const svg = svgRef.current;
+      if (svg) {
+        const rect = svg.getBoundingClientRect();
+        const x = (e.clientX - rect.left)  / scale;
+        const y = (e.clientY - rect.top)   / scale;
+        onLassoMove(x, y);
+      }
+      return;
+    }
     // Snap hover ghost to duration grid so the full beat area previews correctly
     onHoverChange(snapSlot(c.slot, effectiveDur(tool)), c.row);
   }
   function onMouseLeave() { onHoverChange(null, null); }
 
+  function onMouseDown(e: React.MouseEvent<SVGSVGElement>) {
+    if (!tool.selectMode) return;
+    // Only initiate lasso on background (note <g> will stopPropagation)
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const x = (e.clientX - rect.left)  / scale;
+    const y = (e.clientY - rect.top)   / scale;
+    onLassoStart(x, y);
+  }
+
+  function onMouseUp() {
+    if (tool.selectMode) onLassoEnd();
+  }
+
   function onClick(e: React.MouseEvent<SVGSVGElement>) {
+    if (tool.selectMode) return; // handled by note-level handlers in select mode
     const c = getCell(e);
     if (!c) return;
     // Check raw position first — allows selecting notes placed at any slot
@@ -613,6 +679,11 @@ function MeasurePanel({
     const slot = snapSlot(c.slot, eff);
     if (wouldOverflow(slot, eff, totalSlots)) return;
     onPlace(slot, c.row);
+  }
+
+  function onContextMenu(e: React.MouseEvent<SVGSVGElement>) {
+    e.preventDefault();
+    onBgCtxMenu(e.clientX, e.clientY);
   }
 
   // A measure is "empty" only when there are no real (non-placeholder) notes.
@@ -646,14 +717,19 @@ function MeasurePanel({
           display: "block",
           background: "white",
           userSelect: "none",
-          cursor: internalHover && !hoverOccupied && !hoverOverflows ? "crosshair"
-                : hoverOccupied ? "pointer"
-                : hoverOverflows ? "not-allowed"
-                : "default",
+          cursor: tool.selectMode
+            ? (lasso ? "crosshair" : "default")
+            : internalHover && !hoverOccupied && !hoverOverflows ? "crosshair"
+            : hoverOccupied ? "pointer"
+            : hoverOverflows ? "not-allowed"
+            : "default",
         }}
+        onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
         onMouseLeave={onMouseLeave}
         onClick={onClick}
+        onContextMenu={onContextMenu}
       >
         {/* ── Staff lines ───────────────────────────────────── */}
         {LINE_YS.map((y, li) => (
@@ -723,8 +799,12 @@ function MeasurePanel({
           const beamed = br ? br.role !== "none" : false;
 
           return (
-            <g key={`n${note.id}-${ni}`} style={{ cursor: "pointer" }}
-              onClick={(e) => { e.stopPropagation(); onNoteClick(ni); }}>
+            <g key={`n${note.id}-${ni}`}
+              style={{ cursor: tool.selectMode ? "pointer" : "pointer" }}
+              onClick={(e) => { e.stopPropagation(); onNoteClick(ni); }}
+              onDoubleClick={(e) => { e.stopPropagation(); onNoteDouble(ni); }}
+              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onNoteCtxMenu(ni, e.clientX, e.clientY); }}
+            >
               {leds.map((ly, li) => (
                 <line key={li}
                   x1={cx - ROW_H * 1.1} y1={ly} x2={cx + ROW_H * 1.1} y2={ly}
@@ -737,6 +817,16 @@ function MeasurePanel({
             </g>
           );
         })}
+
+        {/* ── Lasso selection rect ──────────────────────────── */}
+        {lasso && (
+          <rect
+            x={lasso.x} y={lasso.y} width={lasso.w} height={lasso.h}
+            fill="rgba(74,108,247,0.10)" stroke="#4a6cf7" strokeWidth={1}
+            strokeDasharray="4 3"
+            style={{ pointerEvents: "none" }}
+          />
+        )}
 
         {/* ── Beams ─────────────────────────────────────────── */}
         {Array.from(beamGroupMap.entries()).map(([gid, group]) => {
@@ -835,27 +925,36 @@ function MeasurePanel({
 // One row of measures (one system). ClefPanel + MeasurePanel[].
 
 interface SysProps {
-  measures:    SysMeasure[];
-  tool:        ToolState;
-  totalSlots:  number;
-  isFirst:     boolean;
-  timeSig:     string;
-  clef?:       ClefType;
-  measureW:    number;
-  hoverZoom:   number;
-  selMeasure:  number | null;
-  selNote:     number | null;
-  hover:       { mid: number; slot: number; row: number } | null;
-  onHover:     (h: { mid: number; slot: number; row: number } | null) => void;
-  onNoteClick: (mid: number, ni: number) => void;
-  onPlace:     (mid: number, slot: number, row: number) => void;
-  onSave:      (mid: number) => void;
+  measures:       SysMeasure[];
+  tool:           ToolState;
+  totalSlots:     number;
+  isFirst:        boolean;
+  timeSig:        string;
+  clef?:          ClefType;
+  measureW:       number;
+  hoverZoom:      number;
+  selMeasure:     number | null;
+  selNote:        number | null;
+  multiSelMap:    Record<number, Set<number>>;
+  lassoMap:       Record<number, { x: number; y: number; w: number; h: number }>;
+  hover:          { mid: number; slot: number; row: number } | null;
+  onHover:        (h: { mid: number; slot: number; row: number } | null) => void;
+  onNoteClick:    (mid: number, ni: number) => void;
+  onNoteDouble:   (mid: number, ni: number) => void;
+  onNoteCtxMenu:  (mid: number, ni: number, cx: number, cy: number) => void;
+  onBgCtxMenu:    (mid: number, cx: number, cy: number) => void;
+  onPlace:        (mid: number, slot: number, row: number) => void;
+  onSave:         (mid: number) => void;
+  onLassoStart:   (mid: number, x: number, y: number) => void;
+  onLassoMove:    (mid: number, x: number, y: number) => void;
+  onLassoEnd:     (mid: number) => void;
 }
 
 function ScoreSystem({
   measures, tool, totalSlots, isFirst, timeSig, clef = "treble",
-  measureW, hoverZoom, selMeasure, selNote,
-  hover, onHover, onNoteClick, onPlace,
+  measureW, hoverZoom, selMeasure, selNote, multiSelMap, lassoMap,
+  hover, onHover, onNoteClick, onNoteDouble, onNoteCtxMenu, onBgCtxMenu, onPlace,
+  onLassoStart, onLassoMove, onLassoEnd,
 }: SysProps) {
   return (
     <div style={{ display: "flex", alignItems: "flex-end", lineHeight: 0 }}>
@@ -876,6 +975,8 @@ function ScoreSystem({
             hoverZoom={hoverZoom}
             selMeasure={selMeasure}
             selNote={selNote}
+            multiSel={multiSelMap[sm.measure.id] ?? new Set()}
+            lasso={lassoMap[sm.measure.id] ?? null}
             hoverSlot={hover?.mid === sm.measure.id ? hover.slot : null}
             hoverRow={hover?.mid  === sm.measure.id ? hover.row  : null}
             onHoverChange={(slot, row) => {
@@ -883,7 +984,13 @@ function ScoreSystem({
               else onHover({ mid: sm.measure.id, slot, row: row! });
             }}
             onNoteClick={(ni) => onNoteClick(sm.measure.id, ni)}
+            onNoteDouble={(ni) => onNoteDouble(sm.measure.id, ni)}
+            onNoteCtxMenu={(ni, cx, cy) => onNoteCtxMenu(sm.measure.id, ni, cx, cy)}
+            onBgCtxMenu={(cx, cy) => onBgCtxMenu(sm.measure.id, cx, cy)}
             onPlace={(slot, row) => onPlace(sm.measure.id, slot, row)}
+            onLassoStart={(x, y) => onLassoStart(sm.measure.id, x, y)}
+            onLassoMove={(x, y) => onLassoMove(sm.measure.id, x, y)}
+            onLassoEnd={() => onLassoEnd(sm.measure.id)}
           />
         );
       })}
@@ -971,10 +1078,21 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
   const [dirty,   setDirty]   = useState<Record<number, boolean>>({});
   const [saving,  setSaving]  = useState<Record<number, boolean>>({});
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-      const [selMid,  setSelMid]  = useState<number | null>(null);
+  const [selMid,  setSelMid]  = useState<number | null>(null);
   const [selNi,   setSelNi]   = useState<number | null>(null);
   const [hover,   setHover]   = useState<{ mid: number; slot: number; row: number } | null>(null);
   const [clef,    setClef]    = useState<ClefType>("treble");
+
+  // Multi-select: Record<measureId, Set<noteIndex>>
+  const [multiSelMap, setMultiSelMap] = useState<Record<number, Set<number>>>({});
+
+  // Lasso drag state
+  const [lassoState, setLassoState] = useState<LassoState | null>(null);
+  // Computed lasso rects per measure (SVG space, positive w/h for rendering)
+  const [lassoMap, setLassoMap] = useState<Record<number, { x: number; y: number; w: number; h: number }>>({});
+
+  // Context menu
+  const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
 
   // Effective measure content width — responds to measureZoom setting
   const measureW = Math.round(MEASURE_W_BASE * settings.measureZoom);
@@ -984,27 +1102,150 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
     setLocalNotes(Object.fromEntries(chart.measures.map((m) => [m.id, m.notes])));
     setDirty({});
     setSelMid(null); setSelNi(null);
+    setMultiSelMap({});
+    setLassoState(null); setLassoMap({});
+    setCtxMenu(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chart.id]);
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+
+      // Delete / Backspace — remove selected notes
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        deleteSelected();
+      }
+
+      // Escape — deselect all
+      if (e.key === "Escape") {
+        setSelMid(null); setSelNi(null);
+        setMultiSelMap({});
+        setCtxMenu(null);
+      }
+
+      // Ctrl+A — select all notes in the focused measure
+      if ((e.ctrlKey || e.metaKey) && e.key === "a") {
+        e.preventDefault();
+        if (selMid !== null) {
+          const notes = localNotes[selMid] ?? [];
+          setMultiSelMap((p) => ({
+            ...p,
+            [selMid]: new Set(notes.map((_, i) => i)),
+          }));
+        }
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  // We intentionally include selMid and localNotes via the closure —
+  // the effect re-subscribes whenever they change.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selMid, localNotes, multiSelMap]);
+
+  // Close context menu on outside click
+  useEffect(() => {
+    if (!ctxMenu) return;
+    function onDown() { setCtxMenu(null); }
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [ctxMenu]);
 
   const changeNotes = useCallback((mid: number, notes: ChartNote[]) => {
     setLocalNotes((p) => ({ ...p, [mid]: notes }));
     setDirty((p) => ({ ...p, [mid]: true }));
   }, []);
 
+  // ── Delete selected notes (single or multi) ────────────────────────────────
+  function deleteSelected() {
+    // Multi-select takes priority
+    const hasMul = Object.values(multiSelMap).some((s) => s.size > 0);
+    if (hasMul) {
+      setLocalNotes((prev) => {
+        const next = { ...prev };
+        for (const [midStr, idxSet] of Object.entries(multiSelMap)) {
+          const mid  = Number(midStr);
+          const orig = prev[mid] ?? [];
+          next[mid]  = orig.filter((_, i) => !idxSet.has(i));
+        }
+        return next;
+      });
+      setDirty((p) => {
+        const next = { ...p };
+        for (const midStr of Object.keys(multiSelMap)) next[Number(midStr)] = true;
+        return next;
+      });
+      setMultiSelMap({});
+      setSelMid(null); setSelNi(null);
+      return;
+    }
+    // Single selection fallback
+    if (selMid !== null && selNi !== null) {
+      changeNotes(selMid, (localNotes[selMid] ?? []).filter((_, i) => i !== selNi));
+      setSelMid(null); setSelNi(null);
+    }
+  }
+
+  // ── Total multi-selected count (for status badge) ─────────────────────────
+  const multiSelCount = Object.values(multiSelMap).reduce((s, set) => s + set.size, 0);
+
   function handleNoteClick(mid: number, ni: number) {
+    if (tool.selectMode) {
+      // Toggle note in multi-select set
+      setMultiSelMap((p) => {
+        const cur  = new Set(p[mid] ?? []);
+        cur.has(ni) ? cur.delete(ni) : cur.add(ni);
+        return { ...p, [mid]: cur };
+      });
+      setSelMid(mid); // keep measure focused
+      return;
+    }
+    // Note-input mode: click existing note to single-select; click again to delete
     if (selMid === mid && selNi === ni) {
       changeNotes(mid, (localNotes[mid] ?? []).filter((_, i) => i !== ni));
       setSelMid(null); setSelNi(null);
     } else {
       setSelMid(mid); setSelNi(ni);
+      setMultiSelMap({});
+    }
+  }
+
+  function handleNoteDouble(mid: number, ni: number) {
+    // Double-click always deletes the note immediately
+    changeNotes(mid, (localNotes[mid] ?? []).filter((_, i) => i !== ni));
+    setSelMid(null); setSelNi(null);
+    setMultiSelMap((p) => {
+      const next = { ...p };
+      const cur  = new Set(next[mid] ?? []);
+      cur.delete(ni);
+      next[mid] = cur;
+      return next;
+    });
+  }
+
+  function handleNoteCtxMenu(mid: number, ni: number, cx: number, cy: number) {
+    // Right-click on a note: add it to multi-select if not already, then show menu
+    setMultiSelMap((p) => {
+      const cur = new Set(p[mid] ?? []);
+      if (!cur.has(ni)) cur.add(ni);
+      return { ...p, [mid]: cur };
+    });
+    setCtxMenu({ x: cx, y: cy, mid, noteIdx: ni });
+  }
+
+  function handleBgCtxMenu(mid: number, cx: number, cy: number) {
+    if (multiSelCount > 0) {
+      setCtxMenu({ x: cx, y: cy, mid, noteIdx: null });
     }
   }
 
   function handlePlace(mid: number, slot: number, row: number) {
+    if (tool.selectMode) return; // no placement in select mode
     const rowDef = D_ROWS[row];
     if (!rowDef) return;
-    // Enforce measure capacity — reject if note would overflow
     const eff = effectiveDur(tool);
     if (wouldOverflow(slot, eff, totalSlots)) return;
     const pitch = tool.isRest ? rowDef.pitch : withAcc(rowDef.pitch, tool.accidental);
@@ -1015,10 +1256,61 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
       start_time_s: null, end_time_s: null,
       notation_position: slot, notation_duration: eff,
     };
-    // Remove any placeholder whole-measure rest before adding the new note
     const existing = (localNotes[mid] ?? []).filter((n) => !isPlaceholderRest(n, totalSlots));
     changeNotes(mid, [...existing, note]);
     setSelMid(null); setSelNi(null);
+  }
+
+  // ── Lasso drag ────────────────────────────────────────────────────────────
+  function handleLassoStart(mid: number, x: number, y: number) {
+    setLassoState({ mid, x0: x, y0: y, x1: x, y1: y });
+    setLassoMap({ [mid]: { x, y, w: 0, h: 0 } });
+    // Clear previous selection
+    setMultiSelMap({});
+  }
+
+  function handleLassoMove(mid: number, x: number, y: number) {
+    setLassoState((prev) => {
+      if (!prev || prev.mid !== mid) return prev;
+      const next = { ...prev, x1: x, y1: y };
+      const rx = Math.min(next.x0, next.x1);
+      const ry = Math.min(next.y0, next.y1);
+      const rw = Math.abs(next.x1 - next.x0);
+      const rh = Math.abs(next.y1 - next.y0);
+      setLassoMap({ [mid]: { x: rx, y: ry, w: rw, h: rh } });
+      return next;
+    });
+  }
+
+  function handleLassoEnd(mid: number) {
+    const ls = lassoState;
+    if (!ls || ls.mid !== mid) { setLassoState(null); setLassoMap({}); return; }
+    const slotW = measureW / totalSlots;
+    const rx = Math.min(ls.x0, ls.x1);
+    const ry = Math.min(ls.y0, ls.y1);
+    const rw = Math.abs(ls.x1 - ls.x0);
+    const rh = Math.abs(ls.y1 - ls.y0);
+    // Select any note whose cx/cy falls within the lasso rect
+    const notes = localNotes[mid] ?? [];
+    const selected = new Set<number>();
+    notes.forEach((note, ni) => {
+      const dur  = note.notation_duration ?? note.duration;
+      const slot = note.notation_position ?? note.position;
+      const cx   = (note.is_rest && dur === "whole")
+        ? totalSlots * slotW / 2
+        : slot * slotW + slotW / 2;
+      const di   = pitchToDRow(note.pitch);
+      const cy   = di * ROW_H + ROW_H / 2;
+      if (cx >= rx && cx <= rx + rw && cy >= ry && cy <= ry + rh) {
+        selected.add(ni);
+      }
+    });
+    if (selected.size > 0) {
+      setMultiSelMap({ [mid]: selected });
+      setSelMid(mid);
+    }
+    setLassoState(null);
+    setLassoMap({});
   }
 
   async function handleTimeSigChange(ts: string) {
@@ -1108,7 +1400,32 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
             {message.text}
           </span>
         )}
+        {multiSelCount > 0 && (
+          <span style={{
+            fontSize: 11, fontWeight: 600,
+            color: "#7c3aed", background: "#ede9fe",
+            padding: "2px 8px", borderRadius: 10,
+          }}>
+            {multiSelCount} note{multiSelCount !== 1 ? "s" : ""} selected
+          </span>
+        )}
         <span style={{ flex: 1 }} />
+        {multiSelCount > 0 && (
+          <button type="button"
+            onClick={() => { setMultiSelMap({}); setSelMid(null); setSelNi(null); }}
+            style={{ padding: "3px 10px", borderRadius: 4, border: "1px solid #c4b5fd",
+                     background: "transparent", color: "#7c3aed", fontSize: 11, cursor: "pointer" }}>
+            Deselect all
+          </button>
+        )}
+        {multiSelCount > 0 && (
+          <button type="button" onClick={deleteSelected}
+            style={{ padding: "3px 10px", borderRadius: 4, border: "none",
+                     background: "#ef4444", color: "white", fontSize: 11,
+                     fontWeight: 600, cursor: "pointer" }}>
+            Delete selected
+          </button>
+        )}
         {anyDirty && (
           <button type="button" onClick={() => { void saveAll(); }}
             style={{ padding: "4px 14px", borderRadius: 5, border: "none",
@@ -1136,15 +1453,12 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
       )}
 
       <p style={{ fontSize: 11, color: "#94a3b8", margin: "2px 0 8px" }}>
-        Click a pitch row to place · click note to select · click again to delete
+        {tool.selectMode
+          ? "Select mode: click notes to multi-select · drag to lasso · Delete key removes selected · Escape clears · Ctrl+A selects all in measure"
+          : "Note mode: click staff to place · click note to select · click again or double-click to delete · right-click for options"}
       </p>
 
       {/* ── Score viewport ─────────────────────────────────────── */}
-      {/*
-        CSS `zoom` scales the content and ALSO scales the layout box, so the
-        outer scroll container correctly shows scrollbars when zoomed in,
-        and the page does not have empty space when zoomed out.
-      */}
       <div style={{ overflowX: "auto" }}>
         <div style={{
           zoom: settings.scoreZoom,
@@ -1173,16 +1487,79 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
                 hoverZoom={settings.hoverZoom}
                 selMeasure={selMid}
                 selNote={selNi}
+                multiSelMap={multiSelMap}
+                lassoMap={lassoMap}
                 hover={hover}
                 onHover={setHover}
                 onNoteClick={handleNoteClick}
+                onNoteDouble={handleNoteDouble}
+                onNoteCtxMenu={handleNoteCtxMenu}
+                onBgCtxMenu={handleBgCtxMenu}
                 onPlace={handlePlace}
                 onSave={(mid) => { void saveMeasure(mid); }}
+                onLassoStart={handleLassoStart}
+                onLassoMove={handleLassoMove}
+                onLassoEnd={handleLassoEnd}
               />
             </div>
           ))}
         </div>
       </div>
+
+      {/* ── Context menu ───────────────────────────────────────── */}
+      {ctxMenu && (
+        <div
+          onMouseDown={(e) => e.stopPropagation()} // prevent outside-click handler from firing
+          style={{
+            position: "fixed",
+            top:      ctxMenu.y,
+            left:     ctxMenu.x,
+            zIndex:   9999,
+            background:   "#1e2035",
+            border:       "1px solid #2a2d4a",
+            borderRadius: 6,
+            boxShadow:    "0 4px 16px rgba(0,0,0,0.35)",
+            minWidth:     160,
+            overflow:     "hidden",
+            fontSize:     12,
+            color:        "#c0caf5",
+          }}
+        >
+          {multiSelCount > 0 && (
+            <div style={{ padding: "5px 12px 4px", fontSize: 10, color: "#565f89",
+                          borderBottom: "1px solid #2a2d4a", fontWeight: 700,
+                          letterSpacing: "0.08em", textTransform: "uppercase" }}>
+              {multiSelCount} note{multiSelCount !== 1 ? "s" : ""} selected
+            </div>
+          )}
+          <button
+            type="button"
+            style={{
+              display: "block", width: "100%", textAlign: "left",
+              padding: "8px 14px", background: "none", border: "none",
+              color: "#f87171", cursor: "pointer", fontSize: 12, fontWeight: 600,
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "#2d1f2e")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+            onClick={() => { deleteSelected(); setCtxMenu(null); }}
+          >
+            🗑 Delete selected note{multiSelCount !== 1 ? "s" : ""}
+          </button>
+          <button
+            type="button"
+            style={{
+              display: "block", width: "100%", textAlign: "left",
+              padding: "8px 14px", background: "none", border: "none",
+              color: "#c0caf5", cursor: "pointer", fontSize: 12,
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "#2a2d4a")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+            onClick={() => { setMultiSelMap({}); setSelMid(null); setSelNi(null); setCtxMenu(null); }}
+          >
+            ✕ Deselect all
+          </button>
+        </div>
+      )}
     </div>
   );
 }

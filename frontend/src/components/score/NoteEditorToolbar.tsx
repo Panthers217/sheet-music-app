@@ -29,6 +29,7 @@ export interface ToolState {
   octave:       number;       // 2–6
   articulation: Articulation; // notation mark placed on the note
   dynamic:      Dynamic;      // dynamic marking placed at note entry
+  selectMode:   boolean;      // when true, clicks select notes instead of placing
 }
 
 export const DEFAULT_TOOL: ToolState = {
@@ -40,6 +41,7 @@ export const DEFAULT_TOOL: ToolState = {
   octave:       4,
   articulation: "",
   dynamic:      "",
+  selectMode:   false,
 };
 
 export function buildPitch(tool: ToolState): string {
@@ -501,9 +503,11 @@ export default function NoteEditorToolbar({ tool, onToolChange, timeSig, onTimeS
     setOpen((p) => ({ ...p, [id]: !p[id] }));
   }
 
-  const pitchDisabled = tool.isRest;
+  const pitchDisabled = tool.isRest || tool.selectMode;
   const dotLabel      = tool.dotted ? "dotted " : "";
-  const displayStr    = tool.isRest
+  const displayStr    = tool.selectMode
+    ? "select mode"
+    : tool.isRest
     ? `rest · ${dotLabel}${tool.duration}`
     : [
         buildPitch(tool),
@@ -625,6 +629,36 @@ export default function NoteEditorToolbar({ tool, onToolChange, timeSig, onTimeS
                 <NoteIcon type={`${d.id}-rest`} size={20} />
               </button>
             ))}
+          </div>
+
+          {/* Select mode toggle */}
+          <div style={{ ...S.row, marginTop: 2 }}>
+            <span style={S.subLabel}>Mode</span>
+            <button
+              type="button"
+              title={tool.selectMode ? "Select mode active — click to switch to Note input" : "Switch to Select mode"}
+              style={{
+                ...S.smallBtn(tool.selectMode),
+                minWidth: 64,
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                borderColor: tool.selectMode ? "#bb9af7" : undefined,
+                background:  tool.selectMode ? "#3b2d5a" : undefined,
+                color:       tool.selectMode ? "#e0cfff" : undefined,
+              }}
+              onClick={() => onToolChange({ ...tool, selectMode: !tool.selectMode })}
+            >
+              <svg width={13} height={13} viewBox="0 0 13 13" fill="currentColor" aria-hidden>
+                <polygon points="1,1 1,10 4,7.5 6,12 7.5,11.3 5.5,6.8 9.5,6.8" />
+              </svg>
+              Select
+            </button>
+            {tool.selectMode && (
+              <span style={{ fontSize: 10, color: "#bb9af7", alignSelf: "center" }}>
+                Select active
+              </span>
+            )}
           </div>
 
           {/* Dotted toggle */}
