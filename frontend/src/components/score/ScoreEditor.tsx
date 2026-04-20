@@ -799,13 +799,17 @@ interface MeasurePanelProps {
   onLassoMove:    (x: number, y: number) => void;
   onLassoEnd:     () => void;
   onDragCommit:   (ni: number, deltaSlot: number, deltaRow: number) => void;
+  /** Repeat/navigation props for this measure */
+  repeatProps:    Partial<ChartMeasure>;
+  /** Called when user clicks measure with a repeatSymbol active */
+  onMeasureRepeat: () => void;
 }
 
 function MeasurePanel({
   sm, tool, totalSlots, measureW, timeSig, isFocused, hoverZoom,
   selMeasure, selNote, multiSel, lasso, hoverSlot, hoverRow,
   onHoverChange, onNoteClick, onNoteDouble, onNoteCtxMenu, onBgCtxMenu, onPlace,
-  onLassoStart, onLassoMove, onLassoEnd, onDragCommit,
+  onLassoStart, onLassoMove, onLassoEnd, onDragCommit, repeatProps, onMeasureRepeat,
 }: MeasurePanelProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const slotW  = measureW / totalSlots;
@@ -1151,6 +1155,8 @@ function MeasurePanel({
 
   function onClick(e: React.MouseEvent<SVGSVGElement>) {
     if (tool.selectMode) return; // handled by note-level handlers in select mode
+    // Repeat symbol mode: clicking anywhere in the measure applies the symbol
+    if (tool.repeatSymbol) { onMeasureRepeat(); return; }
     const c = getCell(e);
     if (!c) return;
     // Check raw position first — allows selecting notes placed at any slot
@@ -1522,9 +1528,103 @@ function MeasurePanel({
         )}
 
         {/* ── Right barline ────────────────────────────────── */}
-        <line x1={measureW - 0.5} y1={STAFF_TOP}
-          x2={measureW - 0.5} y2={STAFF_BOT + ROW_H / 2}
-          stroke="#000" strokeWidth={1.0} style={{ pointerEvents: "none" }} />
+        {/* When repeat_both or repeat_end: thick right barline + dots */}
+        {(repeatProps.repeat_both || repeatProps.repeat_end) ? (
+          <g style={{ pointerEvents: "none" }}>
+            {/* Dots */}
+            <circle cx={measureW - 11} cy={LINE_YS[1]! + ROW_H / 2} r={2.2} fill="#000" />
+            <circle cx={measureW - 11} cy={LINE_YS[2]! + ROW_H / 2} r={2.2} fill="#000" />
+            {/* Thin barline */}
+            <line x1={measureW - 7} y1={STAFF_TOP} x2={measureW - 7} y2={STAFF_BOT + ROW_H / 2}
+              stroke="#000" strokeWidth={1.0} />
+            {/* Thick barline */}
+            <rect x={measureW - 5} y={STAFF_TOP} width={4} height={STAFF_BOT - STAFF_TOP + ROW_H / 2}
+              fill="#000" />
+          </g>
+        ) : (
+          <line x1={measureW - 0.5} y1={STAFF_TOP}
+            x2={measureW - 0.5} y2={STAFF_BOT + ROW_H / 2}
+            stroke="#000" strokeWidth={1.0} style={{ pointerEvents: "none" }} />
+        )}
+
+        {/* ── Repeat start barline (left edge) ─────────────── */}
+        {(repeatProps.repeat_start || repeatProps.repeat_both) && (
+          <g style={{ pointerEvents: "none" }}>
+            {/* Thick barline */}
+            <rect x={0} y={STAFF_TOP} width={4} height={STAFF_BOT - STAFF_TOP + ROW_H / 2}
+              fill="#000" />
+            {/* Thin barline */}
+            <line x1={6} y1={STAFF_TOP} x2={6} y2={STAFF_BOT + ROW_H / 2}
+              stroke="#000" strokeWidth={1.0} />
+            {/* Dots */}
+            <circle cx={10} cy={LINE_YS[1]! + ROW_H / 2} r={2.2} fill="#000" />
+            <circle cx={10} cy={LINE_YS[2]! + ROW_H / 2} r={2.2} fill="#000" />
+          </g>
+        )}
+
+        {/* ── Segno symbol above beat 1 ────────────────────── */}
+        {repeatProps.segno && (
+          <text x={8} y={STAFF_TOP - 4}
+            fontSize={ROW_H * 1.4} fontFamily="Bravura, 'Times New Roman', serif"
+            fill="#1a1a2e" style={{ pointerEvents: "none", userSelect: "none" }}>
+            {"\uE047"}
+          </text>
+        )}
+
+        {/* ── Coda symbol above beat 1 ─────────────────────── */}
+        {repeatProps.coda && (
+          <text x={repeatProps.segno ? 26 : 8} y={STAFF_TOP - 4}
+            fontSize={ROW_H * 1.4} fontFamily="Bravura, 'Times New Roman', serif"
+            fill="#1a1a2e" style={{ pointerEvents: "none", userSelect: "none" }}>
+            {"\uE048"}
+          </text>
+        )}
+
+        {/* ── Volta bracket above staff ─────────────────────── */}
+        {repeatProps.volta && (() => {
+          const label = repeatProps.volta === "1" ? "1." : repeatProps.volta === "2" ? "2." : "1./2.";
+          const isOpen = repeatProps.volta === "open";
+          const vY = STAFF_TOP - ROW_H * 1.2;
+          return (
+            <g style={{ pointerEvents: "none" }}>
+              {/* Left tick */}
+              <line x1={1} y1={vY} x2={1} y2={STAFF_TOP} stroke="#1a1a2e" strokeWidth={1.5} />
+              {/* Top horizontal line */}
+              <line x1={1} y1={vY} x2={isOpen ? measureW - 1 : measureW - 1} y2={vY}
+                stroke="#1a1a2e" strokeWidth={1.5} />
+              {/* Right tick only for closed endings */}
+              {!isOpen && (
+                <line x1={measureW - 1} y1={vY} x2={measureW - 1} y2={STAFF_TOP}
+                  stroke="#1a1a2e" strokeWidth={1.5} />
+              )}
+              {/* Label */}
+              <text x={5} y={vY - 2}
+                fontSize={ROW_H * 0.85} fontFamily="serif"
+                fill="#1a1a2e" style={{ userSelect: "none" }}>
+                {label}
+              </text>
+            </g>
+          );
+        })()}
+
+        {/* ── Fine / navigation text at end barline ────────── */}
+        {(repeatProps.fine || repeatProps.navigation) && (
+          <text
+            x={measureW - 6}
+            y={STAFF_TOP - 4}
+            fontSize={ROW_H * 0.85}
+            fontFamily="serif" fontStyle="italic" fontWeight={700}
+            textAnchor="end" fill="#1a1a2e"
+            style={{ pointerEvents: "none", userSelect: "none" }}>
+            {repeatProps.fine
+              ? "Fine"
+              : repeatProps.navigation === "dc" ? "D.C."
+              : repeatProps.navigation === "ds" ? "D.S."
+              : repeatProps.navigation === "dc-al-fine" ? "D.C. al Fine"
+              : repeatProps.navigation === "ds-al-coda" ? "D.S. al Coda"
+              : "D.C. al Coda"}
+          </text>
+        )}
 
         {/* ── Unsaved indicator dot ────────────────────────── */}
         {sm.dirty && (
@@ -1565,13 +1665,17 @@ interface SysProps {
   onLassoMove:    (mid: number, x: number, y: number) => void;
   onLassoEnd:     (mid: number) => void;
   onDragCommit:   (mid: number, ni: number, deltaSlot: number, deltaRow: number) => void;
+  /** Repeat/navigation props keyed by measure id */
+  repeatPropsMap: Record<number, Partial<ChartMeasure>>;
+  /** Called when user clicks a measure while a repeatSymbol is active */
+  onMeasureRepeat: (mid: number) => void;
 }
 
 function ScoreSystem({
   measures, tool, totalSlots, isFirst, timeSig, clef = "treble",
   measureW, hoverZoom, selMeasure, selNote, multiSelMap, lassoMap,
   hover, onHover, onNoteClick, onNoteDouble, onNoteCtxMenu, onBgCtxMenu, onPlace,
-  onLassoStart, onLassoMove, onLassoEnd, onDragCommit,
+  onLassoStart, onLassoMove, onLassoEnd, onDragCommit, repeatPropsMap, onMeasureRepeat,
 }: SysProps) {
   return (
     <div style={{ display: "flex", alignItems: "flex-end", lineHeight: 0 }}>
@@ -1609,6 +1713,8 @@ function ScoreSystem({
             onLassoMove={(x, y) => onLassoMove(sm.measure.id, x, y)}
             onLassoEnd={() => onLassoEnd(sm.measure.id)}
             onDragCommit={(ni, dSlot, dRow) => onDragCommit(sm.measure.id, ni, dSlot, dRow)}
+            repeatProps={repeatPropsMap[sm.measure.id] ?? {}}
+            onMeasureRepeat={() => onMeasureRepeat(sm.measure.id)}
           />
         );
       })}
@@ -1804,6 +1910,11 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
   const [hover,   setHover]   = useState<{ mid: number; slot: number; row: number } | null>(null);
   const [clef,    setClef]    = useState<ClefType>("treble");
 
+  // Repeat / navigation props per measure (keyed by measure id)
+  const [repeatProps, setRepeatProps] = useState<Record<number, Partial<ChartMeasure>>>(() =>
+    Object.fromEntries(chart.measures.map((m) => [m.id, {}]))
+  );
+
   // Multi-select: Record<measureId, Set<noteIndex>>
   const [multiSelMap, setMultiSelMap] = useState<Record<number, Set<number>>>({});
 
@@ -1826,6 +1937,7 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
     setMultiSelMap({});
     setLassoState(null); setLassoMap({});
     setCtxMenu(null);
+    setRepeatProps(Object.fromEntries(chart.measures.map((m) => [m.id, {}])));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chart.id]);
 
@@ -2034,6 +2146,42 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
     const existing = (localNotes[mid] ?? []).filter((n) => !isPlaceholderRest(n, totalSlots));
     changeNotes(mid, [...existing, note]);
     setSelMid(null); setSelNi(null);
+  }
+
+  // ── Measure repeat / navigation symbol placement ──────────────────────────
+  function handleMeasureRepeat(mid: number) {
+    const sym = tool.repeatSymbol;
+    if (!sym) return;
+    setRepeatProps((prev) => {
+      const cur: Partial<ChartMeasure> = { ...prev[mid] };
+      // Barlines
+      if (sym === "repeat-start") {
+        cur.repeat_start = !cur.repeat_start;
+        cur.repeat_both = false;
+      } else if (sym === "repeat-end") {
+        cur.repeat_end = !cur.repeat_end;
+        cur.repeat_both = false;
+      } else if (sym === "repeat-both") {
+        const wasOn = !!cur.repeat_both;
+        cur.repeat_both = !wasOn;
+        cur.repeat_start = false;
+        cur.repeat_end = false;
+      }
+      // Anchors
+      else if (sym === "segno")  { cur.segno = !cur.segno; }
+      else if (sym === "coda")   { cur.coda  = !cur.coda; }
+      else if (sym === "fine")   { cur.fine  = !cur.fine; }
+      // Navigation text (toggle off if same, otherwise set)
+      else if (sym === "dc" || sym === "ds" || sym === "dc-al-fine" || sym === "ds-al-coda" || sym === "dc-al-coda") {
+        cur.navigation = cur.navigation === sym ? null : sym as ChartMeasure["navigation"];
+      }
+      // Volta brackets (toggle off if same, otherwise set)
+      else if (sym === "volta-1" || sym === "volta-2" || sym === "volta-open") {
+        const v = sym === "volta-1" ? "1" : sym === "volta-2" ? "2" : "open";
+        cur.volta = cur.volta === v ? null : (v as ChartMeasure["volta"]);
+      }
+      return { ...prev, [mid]: cur };
+    });
   }
 
   // ── Lasso drag ────────────────────────────────────────────────────────────
@@ -2358,6 +2506,8 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
                 onLassoMove={handleLassoMove}
                 onLassoEnd={handleLassoEnd}
                 onDragCommit={handleDragCommit}
+                repeatPropsMap={repeatProps}
+                onMeasureRepeat={handleMeasureRepeat}
               />
             </div>
           ))}

@@ -48,6 +48,22 @@ export type ChartMeasure = {
   chord_confidence: number | null;
   chord_alternatives: [string, number][] | null;
   notes: ChartNote[];
+  /** Start-repeat barline at the left edge of this measure. */
+  repeat_start?: boolean | null;
+  /** End-repeat barline at the right edge of this measure. */
+  repeat_end?: boolean | null;
+  /** Both end-repeat and start-repeat at the barline between this and the next measure. */
+  repeat_both?: boolean | null;
+  /** Segno anchor placed above beat 1 of this measure. */
+  segno?: boolean | null;
+  /** Coda anchor placed above beat 1 of this measure. */
+  coda?: boolean | null;
+  /** "Fine" label at the end barline of this measure. */
+  fine?: boolean | null;
+  /** Navigation direction text at the end barline (e.g. D.C., D.S., D.C. al Fine). */
+  navigation?: "dc" | "ds" | "dc-al-fine" | "ds-al-coda" | "dc-al-coda" | null;
+  /** Volta / numbered ending bracket above this measure. */
+  volta?: "1" | "2" | "open" | null;
 };
 
 export type Chart = {

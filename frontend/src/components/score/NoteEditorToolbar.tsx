@@ -72,6 +72,28 @@ export type Articulation =
   | "arpeggio-down"   // rolled chord downward
   | "vibrato";        // vibrato ~ wavy line
 
+/** Measure-level repeat and navigation symbols. */
+export type RepeatSymbol =
+  | ""
+  // Barline types
+  | "repeat-start"    // |: start repeat barline
+  | "repeat-end"      // :| end repeat barline
+  | "repeat-both"     // :||: end+start repeat barline
+  // Navigation anchors (placed at beat 1 of measure)
+  | "segno"           // S with slashes — go-back marker
+  | "coda"            // target circle with cross
+  // End-of-passage text directions
+  | "fine"            // end of the piece / Da capo target
+  | "dc"              // Da Capo — repeat from the top
+  | "ds"              // Dal Segno — repeat from the segno
+  | "dc-al-fine"      // Da Capo al Fine
+  | "ds-al-coda"      // Dal Segno al Coda
+  | "dc-al-coda"      // Da Capo al Coda
+  // Volta / numbered endings
+  | "volta-1"         // first ending bracket
+  | "volta-2"         // second ending bracket
+  | "volta-open";     // open-ended volta bracket
+
 export type Dynamic =
   | ""
   | "pppp" | "ppp" | "pp" | "p"
@@ -104,6 +126,7 @@ export interface ToolState {
   slurStart:    boolean;      // marks start of a slur phrase
   arpeggio:     boolean;      // rolled chord (arpeggio wavy line)
   ottava:       string;       // "" | "8va" | "8vb" | "15ma" | "15mb"
+  repeatSymbol:  RepeatSymbol; // measure-level repeat/navigation symbol to place
 }
 
 export const DEFAULT_TOOL: ToolState = {
@@ -122,6 +145,7 @@ export const DEFAULT_TOOL: ToolState = {
   slurStart:    false,
   arpeggio:     false,
   ottava:       "",
+  repeatSymbol: "",
 };
 
 export function buildPitch(tool: ToolState): string {
@@ -541,6 +565,76 @@ function ArticIcon({ type, size = 20 }: { type: string; size?: number }) {
       );
     default:
       return <span style={{ fontSize: 11 }}>{type}</span>;
+  }
+}
+
+// ─── Repeat / navigation icon ─────────────────────────────────────────────────
+
+function RepeatIcon({ type, size = 22 }: { type: RepeatSymbol; size?: number }) {
+  const s = size;
+  switch (type) {
+    case "repeat-start":
+      return (
+        <svg width={s} height={s} viewBox="0 0 22 22" aria-hidden>
+          {/* Thick barline left, thin barline, two dots */}
+          <line x1="3"  y1="3" x2="3"  y2="19" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" />
+          <line x1="7"  y1="3" x2="7"  y2="19" stroke="currentColor" strokeWidth="1.5" />
+          <circle cx="12" cy="8"  r="2" fill="currentColor" />
+          <circle cx="12" cy="14" r="2" fill="currentColor" />
+        </svg>
+      );
+    case "repeat-end":
+      return (
+        <svg width={s} height={s} viewBox="0 0 22 22" aria-hidden>
+          {/* Two dots, thin barline, thick barline right */}
+          <circle cx="10" cy="8"  r="2" fill="currentColor" />
+          <circle cx="10" cy="14" r="2" fill="currentColor" />
+          <line x1="15" y1="3" x2="15" y2="19" stroke="currentColor" strokeWidth="1.5" />
+          <line x1="19" y1="3" x2="19" y2="19" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" />
+        </svg>
+      );
+    case "repeat-both":
+      return (
+        <svg width={s} height={s} viewBox="0 0 28 22" aria-hidden>
+          {/* :||: */}
+          <line x1="2"  y1="3" x2="2"  y2="19" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" />
+          <line x1="6"  y1="3" x2="6"  y2="19" stroke="currentColor" strokeWidth="1.4" />
+          <circle cx="10" cy="8"  r="1.8" fill="currentColor" />
+          <circle cx="10" cy="14" r="1.8" fill="currentColor" />
+          <circle cx="18" cy="8"  r="1.8" fill="currentColor" />
+          <circle cx="18" cy="14" r="1.8" fill="currentColor" />
+          <line x1="22" y1="3" x2="22" y2="19" stroke="currentColor" strokeWidth="1.4" />
+          <line x1="26" y1="3" x2="26" y2="19" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" />
+        </svg>
+      );
+    case "segno":
+      // Bravura U+E047 glyph or hand-drawn S with slashes
+      return (
+        <svg width={s} height={s} viewBox="0 0 22 22" aria-hidden>
+          <text x="11" y="18" fontSize="16" fontFamily="Bravura, 'Times New Roman', serif"
+            textAnchor="middle" fill="currentColor"
+            style={{ userSelect: "none" }}>{"\uE047"}</text>
+        </svg>
+      );
+    case "coda":
+      // Bravura U+E048 or hand-drawn target circle with cross
+      return (
+        <svg width={s} height={s} viewBox="0 0 22 22" aria-hidden>
+          <text x="11" y="18" fontSize="16" fontFamily="Bravura, 'Times New Roman', serif"
+            textAnchor="middle" fill="currentColor"
+            style={{ userSelect: "none" }}>{"\uE048"}</text>
+        </svg>
+      );
+    case "fine":
+      return (
+        <svg width={s} height={s} viewBox="0 0 28 22" aria-hidden>
+          <text x="14" y="16" fontSize="11" fontFamily="serif" fontStyle="italic"
+            fontWeight="bold" textAnchor="middle" fill="currentColor"
+            style={{ userSelect: "none" }}>Fine</text>
+        </svg>
+      );
+    default:
+      return <span style={{ fontSize: 10 }}>{type || "—"}</span>;
   }
 }
 
@@ -966,6 +1060,7 @@ export default function NoteEditorToolbar({ tool, onToolChange, timeSig, onTimeS
     spanners:     false,
     articulation: false,
     dynamics:     false,
+    repeats:      false,
   });
 
   function toggle(id: string) {
@@ -976,6 +1071,8 @@ export default function NoteEditorToolbar({ tool, onToolChange, timeSig, onTimeS
   const dotLabel      = tool.dotted ? "dotted " : "";
   const displayStr    = tool.selectMode
     ? "select mode"
+    : tool.repeatSymbol
+    ? `repeat mode · ${tool.repeatSymbol}`
     : tool.isRest
     ? `rest · ${dotLabel}${tool.duration}`
     : [
@@ -1443,6 +1540,94 @@ export default function NoteEditorToolbar({ tool, onToolChange, timeSig, onTimeS
         <p style={{ margin: "4px 0 0", fontSize: 10, color: "#565f89" }}>
           Stored locally — backend persistence in a future milestone.
         </p>
+      </Section>
+
+      {/* ── Repeats & Navigation ─────────────────────────────── */}
+      <Section
+        id="repeats"
+        label="Repeats &amp; Navigation"
+        open={!!open.repeats}
+        onToggle={toggle}
+        badge={
+          tool.repeatSymbol
+            ? <span style={S.badge("#c084fc")}>{tool.repeatSymbol}</span>
+            : undefined
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+
+          <div style={S.row}>
+            <span style={S.subLabel}>Barlines</span>
+            {([
+              { id: "repeat-start", title: "Start Repeat  |:",  icon: <RepeatIcon type="repeat-start" size={22} /> },
+              { id: "repeat-end",   title: "End Repeat  :|",    icon: <RepeatIcon type="repeat-end"   size={22} /> },
+              { id: "repeat-both",  title: "End + Start  :||:", icon: <RepeatIcon type="repeat-both"  size={22} /> },
+            ] as const).map(({ id, title, icon }) => (
+              <button key={id} type="button" title={title}
+                style={S.articBtn(tool.repeatSymbol === id)}
+                onClick={() => onToolChange({ ...tool, repeatSymbol: tool.repeatSymbol === id ? "" : id })}>
+                {icon}
+              </button>
+            ))}
+          </div>
+
+          <div style={S.row}>
+            <span style={S.subLabel}>Anchors</span>
+            {([
+              { id: "segno", title: "Segno (𝄋)",  icon: <RepeatIcon type="segno" size={22} /> },
+              { id: "coda",  title: "Coda (𝄌)",   icon: <RepeatIcon type="coda"  size={22} /> },
+              { id: "fine",  title: "Fine",        icon: <RepeatIcon type="fine"  size={22} /> },
+            ] as const).map(({ id, title, icon }) => (
+              <button key={id} type="button" title={title}
+                style={S.articBtn(tool.repeatSymbol === id)}
+                onClick={() => onToolChange({ ...tool, repeatSymbol: tool.repeatSymbol === id ? "" : id })}>
+                {icon}
+              </button>
+            ))}
+          </div>
+
+          <div style={S.row}>
+            <span style={S.subLabel}>Navigation</span>
+            {([
+              { id: "dc",          title: "Da Capo (D.C.)" },
+              { id: "ds",          title: "Dal Segno (D.S.)" },
+              { id: "dc-al-fine",  title: "D.C. al Fine" },
+              { id: "ds-al-coda",  title: "D.S. al Coda" },
+              { id: "dc-al-coda",  title: "D.C. al Coda" },
+            ] as const).map(({ id, title }) => (
+              <button key={id} type="button" title={title}
+                style={{ ...S.articBtn(tool.repeatSymbol === id), fontSize: 9, padding: "2px 5px" }}
+                onClick={() => onToolChange({ ...tool, repeatSymbol: tool.repeatSymbol === id ? "" : id })}>
+                {id === "dc" ? "D.C." : id === "ds" ? "D.S." : id === "dc-al-fine" ? "D.C. al Fine" : id === "ds-al-coda" ? "D.S. al Coda" : "D.C. al Coda"}
+              </button>
+            ))}
+          </div>
+
+          <div style={S.row}>
+            <span style={S.subLabel}>Endings</span>
+            {([
+              { id: "volta-1",    title: "1st Ending",    label: "1." },
+              { id: "volta-2",    title: "2nd Ending",    label: "2." },
+              { id: "volta-open", title: "Open Ending",   label: "open" },
+            ] as const).map(({ id, title, label }) => (
+              <button key={id} type="button" title={title}
+                style={{ ...S.articBtn(tool.repeatSymbol === id), fontSize: 11, padding: "2px 7px" }}
+                onClick={() => onToolChange({ ...tool, repeatSymbol: tool.repeatSymbol === id ? "" : id })}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {tool.repeatSymbol && (
+            <button type="button" style={S.clearBtn}
+              onClick={() => onToolChange({ ...tool, repeatSymbol: "" })}>
+              clear
+            </button>
+          )}
+          <p style={{ margin: "4px 0 0", fontSize: 10, color: "#565f89" }}>
+            Click a measure to apply · click again to remove.
+          </p>
+        </div>
       </Section>
 
     </div>
