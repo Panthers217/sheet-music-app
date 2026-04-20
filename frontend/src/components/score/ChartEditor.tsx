@@ -22,6 +22,22 @@ export type ChartNote = {
   notation_duration: string | null;
   /** User-overridden stem direction. null / undefined = auto (computed from pitch). */
   stem_direction?: "up" | "down" | null;
+  /** Articulation marking attached to the note (e.g. staccato, marcato, fermata). */
+  articulation?: string | null;
+  /** Dynamic marking attached to the note (e.g. "mf", "ff", "sfz"). */
+  dynamic?: string | null;
+  /** Notehead shape override (e.g. "slash", "x", "diamond", "diamond-open", "triangle", "square"). */
+  notehead_type?: string | null;
+  /** Tremolo slash count (0 = none, 1–4 = slashes). */
+  tremolo?: number | null;
+  /** True if this note should be tied (curved arc) to the next note of the same pitch. */
+  tied_to_next?: boolean | null;
+  /** Slur marker: "start" begins a slur, "end" closes it. */
+  slur?: "start" | "end" | null;
+  /** True if an arpeggio (chord roll) wavy line should be drawn left of this note. */
+  arpeggio?: boolean | null;
+  /** Octave transposition indicator above/below the staff. */
+  ottava?: "8va" | "8vb" | "15ma" | "15mb" | null;
 };
 
 export type ChartMeasure = {

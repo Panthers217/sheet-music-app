@@ -191,7 +191,9 @@ function pitchToDRow(pitch: string): number {
   return Math.max(0, Math.min(D_TOTAL - 1, allIdx - D_START));
 }
 
-function accSign(pitch: string): "♯" | "♭" | "" {
+function accSign(pitch: string): "♯" | "♭" | "𝄪" | "𝄫" | "" {
+  if (pitch.includes("##")) return "𝄪";
+  if (/[A-G]bb\d/.test(pitch)) return "𝄫";
   if (pitch.includes("#")) return "♯";
   if (/[A-G]b\d/.test(pitch)) return "♭";
   return "";
@@ -238,9 +240,11 @@ interface NHProps {
   beamed?: boolean;          // when true, flags are suppressed (beam drawn by parent)
   suppressStem?: boolean;    // when true, stem + flags omitted (chord stem drawn by parent)
   stemEndOverride?: number;  // when set, stem is drawn to this Y instead of cy ± STEM_LEN
+  noteheadType?: string;     // alternate notehead shape: "slash"|"x"|"circle-x"|"diamond"|"diamond-open"|"triangle"|"square"
+  tremolo?: number;          // 0-4 slash marks through/on stem
 }
 
-function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, beamed = false, suppressStem = false, stemEndOverride }: NHProps) {
+function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, beamed = false, suppressStem = false, stemEndOverride, noteheadType = "normal", tremolo = 0 }: NHProps) {
   const isDotted = duration.startsWith("dotted-");
   const baseDur  = isDotted ? duration.slice(7) : duration; // "dotted-quarter" → "quarter"
   const rx     = ROW_H * 0.68;
@@ -347,10 +351,45 @@ function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, 
           {acc}
         </text>
       )}
-      {filled
-        ? <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill={s} />
-        : <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill="white" stroke={s} strokeWidth={1.7} />
-      }
+      {/* ── Notehead shape ──────────────────────────────────────── */}
+      {noteheadType === "slash" ? (
+        <path d={`M${cx - rx * 0.7},${cy + ry * 1.2} L${cx + rx * 0.7},${cy - ry * 1.2}`}
+          stroke={s} strokeWidth={4} strokeLinecap="square" style={{ pointerEvents: "none" }} />
+      ) : noteheadType === "back-slash" ? (
+        <path d={`M${cx + rx * 0.7},${cy + ry * 1.2} L${cx - rx * 0.7},${cy - ry * 1.2}`}
+          stroke={s} strokeWidth={4} strokeLinecap="square" style={{ pointerEvents: "none" }} />
+      ) : noteheadType === "x" ? (
+        <g style={{ pointerEvents: "none" }}>
+          <line x1={cx - rx * 0.7} y1={cy - ry * 0.9} x2={cx + rx * 0.7} y2={cy + ry * 0.9}
+            stroke={s} strokeWidth={2.5} strokeLinecap="round" />
+          <line x1={cx + rx * 0.7} y1={cy - ry * 0.9} x2={cx - rx * 0.7} y2={cy + ry * 0.9}
+            stroke={s} strokeWidth={2.5} strokeLinecap="round" />
+        </g>
+      ) : noteheadType === "circle-x" ? (
+        <g style={{ pointerEvents: "none" }}>
+          <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill="none" stroke={s} strokeWidth={1.5} />
+          <line x1={cx - rx * 0.7} y1={cy - ry * 0.7} x2={cx + rx * 0.7} y2={cy + ry * 0.7}
+            stroke={s} strokeWidth={1.5} strokeLinecap="round" />
+          <line x1={cx + rx * 0.7} y1={cy - ry * 0.7} x2={cx - rx * 0.7} y2={cy + ry * 0.7}
+            stroke={s} strokeWidth={1.5} strokeLinecap="round" />
+        </g>
+      ) : noteheadType === "diamond" ? (
+        <path d={`M${cx},${cy - ry * 1.5} L${cx + rx * 1.2},${cy} L${cx},${cy + ry * 1.5} L${cx - rx * 1.2},${cy} Z`}
+          fill={s} style={{ pointerEvents: "none" }} />
+      ) : noteheadType === "diamond-open" ? (
+        <path d={`M${cx},${cy - ry * 1.5} L${cx + rx * 1.2},${cy} L${cx},${cy + ry * 1.5} L${cx - rx * 1.2},${cy} Z`}
+          fill="white" stroke={s} strokeWidth={1.5} style={{ pointerEvents: "none" }} />
+      ) : noteheadType === "triangle" ? (
+        <path d={`M${cx},${cy - ry * 1.6} L${cx + rx * 1.1},${cy + ry * 1.0} L${cx - rx * 1.1},${cy + ry * 1.0} Z`}
+          fill={s} style={{ pointerEvents: "none" }} />
+      ) : noteheadType === "square" ? (
+        <rect x={cx - rx} y={cy - ry * 1.1} width={rx * 2} height={ry * 2.2}
+          fill={s} style={{ pointerEvents: "none" }} />
+      ) : filled ? (
+        <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill={s} />
+      ) : (
+        <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill="white" stroke={s} strokeWidth={1.7} />
+      )}
       {/* Augmentation dot: to the upper-right of the notehead */}
       {isDotted && (
         <circle cx={cx + rx + 5} cy={cy - ry * 0.35} r={ROW_H * 0.12}
@@ -364,6 +403,23 @@ function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, 
         <line x1={stemX} y1={cy} x2={stemX} y2={stemEnd}
           stroke={NOTE_BLACK} strokeWidth={1.4} />
       )}
+      {/* Tremolo slashes through/on the stem */}
+      {tremolo > 0 && baseDur !== "whole" && !suppressStem && (() => {
+        const slashW = rx * 1.6;
+        const spacing = ROW_H * 0.7;
+        const midY = (cy + stemEnd) / 2;
+        const startY = midY - (tremolo - 1) * spacing * 0.5;
+        return Array.from({ length: tremolo }, (_, i) => {
+          const sy = startY + i * spacing;
+          return (
+            <line key={i}
+              x1={stemX - slashW / 2} y1={sy - spacing * 0.35}
+              x2={stemX + slashW / 2} y2={sy + spacing * 0.35}
+              stroke={NOTE_BLACK} strokeWidth={1.8} strokeLinecap="round"
+              style={{ pointerEvents: "none" }} />
+          );
+        });
+      })()}
       {!beamed && !suppressStem && baseDur === "eighth" && (
         <path
           d={stemUp
@@ -389,8 +445,173 @@ function NoteHead({ cx, cy, duration, isRest, selected, acc, dir, slots, slotW, 
   );
 }
 
-function GhostHead({ cx, cy }: { cx: number; cy: number }) {
-  return (
+// ─── ArticMark ────────────────────────────────────────────────────────────────
+// Renders an articulation symbol above (or below) a notehead in the score SVG.
+// cx/cy = notehead centre. dir = stem direction (articulation is opposite stem).
+
+function ArticMark({ type, cx, cy, dir }: { type: string; cx: number; cy: number; dir: "up" | "down" }) {
+  // Place mark on the side opposite the stem (same side as notehead open space)
+  const above    = dir === "up";   // stem up → mark below; stem down → mark above
+  const offsetY  = above ? cy + ROW_H * 1.6 : cy - ROW_H * 1.6;
+  const textY    = above ? cy + ROW_H * 2.2 : cy - ROW_H * 1.0;
+  const s = ROW_H * 1.1;   // icon size
+
+  // Symbols rendered as SMuFL glyphs or simple SVG shapes
+  const GLYPH_MAP: Record<string, string> = {
+    staccato:     "\uE4A0",  // SMuFL articStaccatoAbove
+    tenuto:       "\uE4A4",  // SMuFL articTenutoAbove
+    accent:       "\uE4A0",  // fallback — we draw custom below
+    marcato:      "\uE4AC",  // SMuFL articMarcatoAbove
+    fermata:      "\uE4C0",  // SMuFL fermataAbove
+    "fermata-short": "\uE4C4",
+    "fermata-long":  "\uE4C6",
+    "breath-mark":   "\uE4CE",
+    "up-bow":        "\uE612",
+    "down-bow":      "\uE610",
+    "snap-pizzicato":"\uE631",
+    "harmonic":      "\uE614",
+    trill:           "\uE566",
+    "trill-wavy":    "\uE566",  // trill + wavy extension line (TODO extension)
+    turn:            "\uE567",
+    "turn-inverted": "\uE568",
+    mordent:         "\uE56C",  // SMuFL ornamentMordent
+    "mordent-inverted": "\uE56D",  // SMuFL ornamentMordentInverted
+    "prall-prall":   "\uE56B",  // SMuFL ornamentTremblement
+    tremblement:     "\uE56E",  // SMuFL ornamentHaydn
+    shake:           "\uE56F",  // SMuFL ornamentShake
+  };
+
+  const fz = ROW_H * 2.2; // render at 2 staff spaces for clarity
+
+  // For glyphed articulations use Bravura text
+  if (GLYPH_MAP[type]) {
+    // accent / marcato / staccato etc use SMuFL "above" variants when above is true
+    // and "below" (offset +1) when below — e.g. E4A0→E4A1
+    const baseGlyph = GLYPH_MAP[type]!;
+    const glyph = (baseGlyph.codePointAt(0) !== undefined && !above &&
+                   (type === "staccato" || type === "accent" || type === "tenuto" || type === "marcato"))
+      ? String.fromCodePoint(baseGlyph.codePointAt(0)! + 1)
+      : baseGlyph;
+
+    return (
+      <text
+        x={cx} y={above ? offsetY + s : offsetY}
+        fontSize={fz} fill="#1a1a2e"
+        fontFamily="Bravura, serif"
+        textAnchor="middle"
+        style={{ userSelect: "none", pointerEvents: "none" }}>
+        {glyph}
+      </text>
+    );
+  }
+
+  // Fallback: simple hand-drawn SVG shapes for articulations without a glyph mapping
+  const r = s / 2;
+  switch (type) {
+    case "staccatissimo":
+      return <ellipse cx={cx} cy={offsetY} rx={r * 0.3} ry={r * 0.6}
+        fill="#1a1a2e" style={{ pointerEvents: "none" }} />;
+    case "portato":
+      return (
+        <g style={{ pointerEvents: "none" }}>
+          <line x1={cx - r * 0.7} y1={offsetY - r * 0.6} x2={cx + r * 0.7} y2={offsetY - r * 0.6}
+            stroke="#1a1a2e" strokeWidth={1.5} strokeLinecap="round" />
+          <circle cx={cx} cy={offsetY + r * 0.1} r={r * 0.28} fill="#1a1a2e" />
+        </g>
+      );
+    case "stress":
+      return <path d={above
+          ? `M${cx - r},${offsetY + r * 0.5} L${cx},${offsetY - r * 0.5} L${cx + r},${offsetY + r * 0.5}`
+          : `M${cx - r},${offsetY - r * 0.5} L${cx},${offsetY + r * 0.5} L${cx + r},${offsetY - r * 0.5}`}
+        stroke="#1a1a2e" strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round"
+        style={{ pointerEvents: "none" }} />;
+    case "strong-accent":
+      return (
+        <g style={{ pointerEvents: "none" }}>
+          <path d={`M${cx - r},${offsetY + r * 0.4} L${cx},${offsetY - r * 0.6} L${cx + r},${offsetY + r * 0.4}`}
+            stroke="#1a1a2e" strokeWidth={2.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          <line x1={cx - r * 0.7} y1={offsetY + r * 0.4} x2={cx + r * 0.7} y2={offsetY + r * 0.4}
+            stroke="#1a1a2e" strokeWidth={1.8} strokeLinecap="round" />
+        </g>
+      );
+    case "left-hand-pizzicato":
+      return (
+        <g style={{ pointerEvents: "none" }}>
+          <line x1={cx} y1={offsetY - r * 0.8} x2={cx} y2={offsetY + r * 0.8}
+            stroke="#1a1a2e" strokeWidth={2} strokeLinecap="round" />
+          <line x1={cx - r * 0.8} y1={offsetY} x2={cx + r * 0.8} y2={offsetY}
+            stroke="#1a1a2e" strokeWidth={2} strokeLinecap="round" />
+        </g>
+      );
+    case "spiccato":
+      return <circle cx={cx} cy={offsetY} r={r * 0.3}
+        fill="#1a1a2e" style={{ pointerEvents: "none" }} />;
+    case "caesura":
+      return (
+        <g style={{ pointerEvents: "none" }}>
+          <line x1={cx - r * 0.4} y1={textY - r * 0.6} x2={cx - r * 0.7} y2={textY + r * 0.6}
+            stroke="#1a1a2e" strokeWidth={2} strokeLinecap="round" />
+          <line x1={cx + r * 0.4} y1={textY - r * 0.6} x2={cx + r * 0.1} y2={textY + r * 0.6}
+            stroke="#1a1a2e" strokeWidth={2} strokeLinecap="round" />
+        </g>
+      );
+    case "doit":
+      return <path d={`M${cx - r * 0.5},${offsetY + r * 0.3} Q${cx},${offsetY + r * 0.3} ${cx + r},${offsetY - r * 0.7}`}
+        stroke="#1a1a2e" strokeWidth={1.8} fill="none" strokeLinecap="round"
+        style={{ pointerEvents: "none" }} />;
+    case "fall":
+      return <path d={`M${cx - r * 0.5},${offsetY - r * 0.3} Q${cx},${offsetY - r * 0.3} ${cx + r},${offsetY + r * 0.7}`}
+        stroke="#1a1a2e" strokeWidth={1.8} fill="none" strokeLinecap="round"
+        style={{ pointerEvents: "none" }} />;
+    case "plop":
+      return <path d={`M${cx - r},${offsetY - r * 0.7} Q${cx},${offsetY} ${cx + r * 0.5},${offsetY}`}
+        stroke="#1a1a2e" strokeWidth={1.8} fill="none" strokeLinecap="round"
+        style={{ pointerEvents: "none" }} />;
+    case "scoop":
+      return <path d={`M${cx - r},${offsetY + r * 0.4} Q${cx - r},${offsetY - r * 0.4} ${cx + r * 0.5},${offsetY - r * 0.4}`}
+        stroke="#1a1a2e" strokeWidth={1.8} fill="none" strokeLinecap="round"
+        style={{ pointerEvents: "none" }} />;
+    case "glissando":
+      return <line x1={cx - r * 0.8} y1={offsetY + r * 0.6} x2={cx + r * 0.8} y2={offsetY - r * 0.6}
+        stroke="#1a1a2e" strokeWidth={2} strokeLinecap="round" style={{ pointerEvents: "none" }} />;
+    case "vibrato":
+      return <path d={`M${cx - r * 1.2},${offsetY} C${cx - r * 0.6},${offsetY - r * 0.8} ${cx - r * 0.2},${offsetY - r * 0.8} ${cx},${offsetY} C${cx + r * 0.2},${offsetY + r * 0.8} ${cx + r * 0.6},${offsetY + r * 0.8} ${cx + r * 1.2},${offsetY}`}
+        stroke="#1a1a2e" strokeWidth={1.5} fill="none" strokeLinecap="round"
+        style={{ pointerEvents: "none" }} />;
+    case "schleifer":
+      return <path d={`M${cx - r * 0.8},${offsetY + r * 0.8} Q${cx - r * 0.3},${offsetY} ${cx},${offsetY} Q${cx + r * 0.3},${offsetY} ${cx + r * 0.8},${offsetY - r * 0.8}`}
+        stroke="#1a1a2e" strokeWidth={1.5} fill="none" strokeLinecap="round"
+        style={{ pointerEvents: "none" }} />;
+    case "arpeggio-up":
+      return (
+        <g style={{ pointerEvents: "none" }}>
+          <path d={`M${cx},${offsetY + r * 1.2} C${cx - r * 0.8},${offsetY + r * 0.7} ${cx + r * 0.8},${offsetY + r * 0.3} ${cx},${offsetY - r * 0.2} C${cx - r * 0.8},${offsetY - r * 0.7} ${cx + r * 0.8},${offsetY - r * 1.1} ${cx},${offsetY - r * 1.6}`}
+            stroke="#1a1a2e" strokeWidth={1.8} fill="none" strokeLinecap="round" />
+          <path d={`M${cx - r * 0.4},${offsetY - r * 1.8} L${cx},${offsetY - r * 1.6} L${cx - r * 0.3},${offsetY - r * 1.2}`}
+            stroke="#1a1a2e" strokeWidth={1.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </g>
+      );
+    case "arpeggio-down":
+      return (
+        <g style={{ pointerEvents: "none" }}>
+          <path d={`M${cx},${offsetY - r * 1.2} C${cx + r * 0.8},${offsetY - r * 0.7} ${cx - r * 0.8},${offsetY - r * 0.3} ${cx},${offsetY + r * 0.2} C${cx + r * 0.8},${offsetY + r * 0.7} ${cx - r * 0.8},${offsetY + r * 1.1} ${cx},${offsetY + r * 1.6}`}
+            stroke="#1a1a2e" strokeWidth={1.8} fill="none" strokeLinecap="round" />
+          <path d={`M${cx + r * 0.4},${offsetY + r * 1.8} L${cx},${offsetY + r * 1.6} L${cx + r * 0.3},${offsetY + r * 1.2}`}
+            stroke="#1a1a2e" strokeWidth={1.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </g>
+      );
+    default:
+      return (
+        <text x={cx} y={textY} fontSize={ROW_H * 0.8} fill="#1a1a2e"
+          textAnchor="middle" fontFamily="serif"
+          style={{ userSelect: "none", pointerEvents: "none" }}>
+          {type}
+        </text>
+      );
+  }
+}
+
+function GhostHead({ cx, cy }: { cx: number; cy: number }) {  return (
     <ellipse cx={cx} cy={cy} rx={ROW_H * 0.68} ry={ROW_H * 0.40}
       fill="rgba(0,0,0,0.07)" stroke="#888" strokeWidth={0.9}
       style={{ pointerEvents: "none" }} />
@@ -413,6 +634,8 @@ const CLEF_GLYPHS: Record<ClefType, string> = {
   treble: "\uE050",  // SMuFL gClef
   bass:   "\uE062",  // SMuFL fClef
   alto:   "\uE05C",  // SMuFL cClef
+  tenor:  "\uE05C",  // same C clef glyph, placed on 4th line
+  percussion: "\uE069", // SMuFL unpitchedPercussionClef1
 };
 
 // ─── ClefPanel ────────────────────────────────────────────────────────────────
@@ -444,7 +667,11 @@ function ClefPanel({ isFirst, timeSig, clef = "treble" }: {
       ? (LINE_YS[3] ?? STAFF_BOT)
       : clef === "bass"
       ? (LINE_YS[1] ?? STAFF_TOP) + Math.round(0.81 * staffH)   // ≈ 63 + 91 = 154
-      :                             (LINE_YS[2] ?? (STAFF_TOP + STAFF_BOT) / 2) + Math.round(0.40 * staffH); // ≈ 91 + 45 = 136
+      : clef === "alto"
+      ?                             (LINE_YS[2] ?? (STAFF_TOP + STAFF_BOT) / 2) + Math.round(0.40 * staffH)
+      : clef === "tenor"
+      ?                             (LINE_YS[1] ?? STAFF_TOP) + Math.round(0.40 * staffH)   // C clef on 4th line
+      :                             STAFF_TOP; // percussion — we draw rectangles inline below
   const glyph  = CLEF_GLYPHS[clef];
   // Time sig: each digit centred in its staff half
   const halfH  = staffH / 2;
@@ -468,11 +695,21 @@ function ClefPanel({ isFirst, timeSig, clef = "treble" }: {
       <line x1={clefW - 0.5} y1={STAFF_TOP} x2={clefW - 0.5} y2={STAFF_BOT + ROW_H / 2}
         stroke="#000" strokeWidth={1.4} />
       {/* Clef glyph — Bravura SMuFL font, precisely sized to the staff */}
-      <text x={2} y={clefBaselineY} fontSize={clef === "treble" ? staffH : clef === "bass" ? 100 : 90} fill="#1a1a1a"
-        fontFamily="Bravura, serif"
-        style={{ userSelect: "none", pointerEvents: "none" }}>
-        {glyph}
-      </text>
+      {clef === "percussion" ? (
+        // Percussion / neutral clef: two solid vertical rectangles spanning the staff
+        <>
+          <rect x={8}  y={STAFF_TOP} width={Math.round(staffH * 0.12)} height={staffH}
+            fill="#1a1a1a" />
+          <rect x={18} y={STAFF_TOP} width={Math.round(staffH * 0.12)} height={staffH}
+            fill="#1a1a1a" />
+        </>
+      ) : (
+        <text x={2} y={clefBaselineY} fontSize={clef === "treble" ? staffH : clef === "bass" ? 100 : 90} fill="#1a1a1a"
+          fontFamily="Bravura, serif"
+          style={{ userSelect: "none", pointerEvents: "none" }}>
+          {glyph}
+        </text>
+      )}
       {/* Time signature — first system only */}
       {isFirst && (
         <>
@@ -1082,10 +1319,83 @@ function MeasurePanel({
                 isRest={note.is_rest} selected={sel}
                 acc={ac} dir={dir} slots={durSl} slotW={slotW}
                 beamed={beamed} suppressStem={inChord}
-                stemEndOverride={beamed && !inChord ? stemEnd : undefined} />
+                stemEndOverride={beamed && !inChord ? stemEnd : undefined}
+                noteheadType={note.notehead_type ?? "normal"}
+                tremolo={note.tremolo ?? 0} />
+              {/* ── Articulation mark ─────────────────────────── */}
+              {note.articulation && (
+                <ArticMark type={note.articulation} cx={cx} cy={cy} dir={dir} />
+              )}
+              {/* ── Dynamic mark ──────────────────────────────── */}
+              {note.dynamic && (
+                <text
+                  x={cx} y={cy + ROW_H * 4.2}
+                  fontSize={ROW_H * 0.85} fill="#c0334d"
+                  textAnchor="middle" fontFamily="serif" fontStyle="italic"
+                  fontWeight={700}
+                  style={{ userSelect: "none", pointerEvents: "none" }}>
+                  {note.dynamic === "<" ? "cresc." : note.dynamic === ">" ? "dim." : note.dynamic}
+                </text>
+              )}
+              {/* ── Arpeggio wavy line ────────────────────────── */}
+              {note.arpeggio && (
+                <path d={`M${cx - ROW_H * 0.9},${cy - ROW_H * 0.6} C${cx - ROW_H * 1.3},${cy - ROW_H * 0.1} ${cx - ROW_H * 0.5},${cy + ROW_H * 0.4} ${cx - ROW_H * 0.9},${cy + ROW_H * 0.9}`}
+                  stroke="#1a1a2e" strokeWidth={1.5} fill="none" strokeLinecap="round"
+                  style={{ pointerEvents: "none" }} />
+              )}
+              {/* ── 8va/8vb label above staff ─────────────────── */}
+              {note.ottava && (
+                <text
+                  x={cx} y={LINE_YS[0]! - ROW_H * 0.8}
+                  fontSize={ROW_H * 0.9} fill="#555" fontFamily="serif" fontStyle="italic"
+                  textAnchor="middle"
+                  style={{ userSelect: "none", pointerEvents: "none" }}>
+                  {note.ottava}
+                </text>
+              )}
             </g>
           );
         })}
+
+        {/* ── Ties ─────────────────────────────────────────────── */}
+        {noteData.map(({ note, cx, cy, dir, ni }) => {
+          if (!note.tied_to_next) return null;
+          // Find next note of same pitch in this measure
+          const nextInfo = noteData.find((nd, j) => j > ni && nd.note.pitch === note.pitch && !nd.note.is_rest);
+          if (!nextInfo) return null;
+          const x1 = cx, x2 = nextInfo.cx;
+          const mid = (x1 + x2) / 2;
+          const arcH = dir === "up" ? ROW_H * 1.2 : -ROW_H * 1.2;
+          return (
+            <path key={`tie-${ni}`}
+              d={`M${x1},${cy} Q${mid},${cy + arcH} ${x2},${nextInfo.cy}`}
+              stroke="#1a1a2e" strokeWidth={1.5} fill="none" strokeLinecap="round"
+              style={{ pointerEvents: "none" }} />
+          );
+        })}
+
+        {/* ── Slurs ────────────────────────────────────────────── */}
+        {(() => {
+          const slurArcs: React.ReactNode[] = [];
+          let slurStart: (typeof noteData)[0] | null = null;
+          noteData.forEach((info, i) => {
+            if (info.note.slur === "start") { slurStart = info; return; }
+            if (info.note.slur === "end" && slurStart) {
+              const x1 = slurStart.cx, x2 = info.cx;
+              const mid = (x1 + x2) / 2;
+              const avgCy = (slurStart.cy + info.cy) / 2;
+              const arcH = slurStart.dir === "up" ? ROW_H * 1.8 : -ROW_H * 1.8;
+              slurArcs.push(
+                <path key={`slur-${i}`}
+                  d={`M${x1},${slurStart.cy} Q${mid},${avgCy + arcH} ${x2},${info.cy}`}
+                  stroke="#1a1a2e" strokeWidth={1.3} fill="none" strokeLinecap="round"
+                  style={{ pointerEvents: "none" }} />
+              );
+              slurStart = null;
+            }
+          });
+          return slurArcs;
+        })()}
 
         {/* ── Drag ghost notes ─────────────────────────────────── */}
         {drag?.isDragging && (() => {
@@ -1375,6 +1685,90 @@ function SelectedNotePanel({
                  fontSize: 11, fontWeight: 600 }}>
         Delete
       </button>
+      <label style={{ color: "#475569", display: "flex", alignItems: "center", gap: 4 }}>
+        Articulation:
+        <select value={note.articulation ?? ""}
+          onChange={(e) => onEdit({ articulation: e.target.value || null })}
+          style={{ marginLeft: 4, fontSize: 11, borderRadius: 4,
+                   border: "1px solid #93c5fd", padding: "2px 4px" }}>
+          <option value="">None</option>
+          {["staccato","staccatissimo","tenuto","portato","accent","marcato","strong-accent","stress",
+            "up-bow","down-bow","snap-pizzicato","left-hand-pizzicato","harmonic","spiccato",
+            "fermata","fermata-short","fermata-long","breath-mark","caesura",
+            "trill","trill-wavy","turn","turn-inverted","mordent","mordent-inverted","prall-prall","tremblement","shake","schleifer",
+            "doit","fall","plop","scoop","glissando","vibrato","arpeggio-up","arpeggio-down"].map((a) => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
+      </label>
+      <label style={{ color: "#475569", display: "flex", alignItems: "center", gap: 4 }}>
+        Dynamic:
+        <select value={note.dynamic ?? ""}
+          onChange={(e) => onEdit({ dynamic: e.target.value || null })}
+          style={{ marginLeft: 4, fontSize: 11, borderRadius: 4,
+                   border: "1px solid #93c5fd", padding: "2px 4px" }}>
+          <option value="">None</option>
+          {["pppp","ppp","pp","p","mp","mf","f","ff","fff","ffff","fp","fz","sf","sfz","sff","sffz","rfz","rf","<",">"].map((d) => (
+            <option key={d} value={d}>{d === "<" ? "cresc." : d === ">" ? "dim." : d}</option>
+          ))}
+        </select>
+      </label>
+      <label style={{ color: "#475569", display: "flex", alignItems: "center", gap: 4 }}>
+        Notehead:
+        <select value={note.notehead_type ?? "normal"}
+          onChange={(e) => onEdit({ notehead_type: e.target.value === "normal" ? null : e.target.value })}
+          style={{ marginLeft: 4, fontSize: 11, borderRadius: 4,
+                   border: "1px solid #93c5fd", padding: "2px 4px" }}>
+          {["normal","slash","x","circle-x","diamond","diamond-open","triangle","square","back-slash"].map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+        </select>
+      </label>
+      <label style={{ color: "#475569", display: "flex", alignItems: "center", gap: 4 }}>
+        Tremolo:
+        <select value={String(note.tremolo ?? 0)}
+          onChange={(e) => onEdit({ tremolo: Number(e.target.value) || null })}
+          style={{ marginLeft: 4, fontSize: 11, borderRadius: 4,
+                   border: "1px solid #93c5fd", padding: "2px 4px" }}>
+          {["0","1","2","3","4"].map((n) => (
+            <option key={n} value={n}>{n === "0" ? "None" : `${n} slash`}</option>
+          ))}
+        </select>
+      </label>
+      <label style={{ display: "flex", alignItems: "center", gap: 4, color: "#475569" }}>
+        <input type="checkbox" checked={!!note.tied_to_next}
+          onChange={(e) => onEdit({ tied_to_next: e.target.checked || null })} />
+        Tie to next
+      </label>
+      <label style={{ color: "#475569", display: "flex", alignItems: "center", gap: 4 }}>
+        Slur:
+        <select value={note.slur ?? ""}
+          onChange={(e) => onEdit({ slur: (e.target.value as ChartNote["slur"]) || null })}
+          style={{ marginLeft: 4, fontSize: 11, borderRadius: 4,
+                   border: "1px solid #93c5fd", padding: "2px 4px" }}>
+          <option value="">None</option>
+          <option value="start">Start</option>
+          <option value="end">End</option>
+        </select>
+      </label>
+      <label style={{ display: "flex", alignItems: "center", gap: 4, color: "#475569" }}>
+        <input type="checkbox" checked={!!note.arpeggio}
+          onChange={(e) => onEdit({ arpeggio: e.target.checked || null })} />
+        Arpeggio
+      </label>
+      <label style={{ color: "#475569", display: "flex", alignItems: "center", gap: 4 }}>
+        Ottava:
+        <select value={note.ottava ?? ""}
+          onChange={(e) => onEdit({ ottava: (e.target.value as ChartNote["ottava"]) || null })}
+          style={{ marginLeft: 4, fontSize: 11, borderRadius: 4,
+                   border: "1px solid #93c5fd", padding: "2px 4px" }}>
+          <option value="">None</option>
+          <option value="8va">8va</option>
+          <option value="8vb">8vb</option>
+          <option value="15ma">15ma</option>
+          <option value="15mb">15mb</option>
+        </select>
+      </label>
       <button type="button" onClick={onClose}
         style={{ padding: "3px 10px", borderRadius: 4, border: "1px solid #93c5fd",
                  background: "transparent", color: "#1e40af", cursor: "pointer", fontSize: 11 }}>
@@ -1628,6 +2022,14 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
       is_rest: tool.isRest, velocity: 80,
       start_time_s: null, end_time_s: null,
       notation_position: slot, notation_duration: eff,
+      articulation: tool.articulation || null,
+      dynamic: tool.dynamic || null,
+      notehead_type: tool.noteheadType !== "normal" ? tool.noteheadType : null,
+      tremolo: tool.tremolo > 0 ? tool.tremolo : null,
+      tied_to_next: tool.tiedToNext || null,
+      slur: tool.slurStart ? "start" : null,
+      arpeggio: tool.arpeggio || null,
+      ottava: tool.ottava as ChartNote["ottava"] || null,
     };
     const existing = (localNotes[mid] ?? []).filter((n) => !isPlaceholderRest(n, totalSlots));
     changeNotes(mid, [...existing, note]);
