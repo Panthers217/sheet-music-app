@@ -27,6 +27,7 @@ import ScoreSettings, {
   DEFAULT_SCORE_SETTINGS,
   type ScoreSettingsValues,
 } from "./ScoreSettings";
+import { getDrumNotehead, getDrumLabel } from "@/lib/drumNotation";
 
 // ─── Duration helpers ─────────────────────────────────────────────────────────
 
@@ -611,8 +612,33 @@ function ArticMark({ type, cx, cy, dir }: { type: string; cx: number; cy: number
   }
 }
 
-function GhostHead({ cx, cy }: { cx: number; cy: number }) {  return (
-    <ellipse cx={cx} cy={cy} rx={ROW_H * 0.68} ry={ROW_H * 0.40}
+function GhostHead({ cx, cy, noteheadType = "normal" }: { cx: number; cy: number; noteheadType?: string }) {
+  const rx = ROW_H * 0.68;
+  const ry = ROW_H * 0.40;
+  const ghostStyle = { pointerEvents: "none" as const };
+  if (noteheadType === "x") {
+    return (
+      <g style={ghostStyle} opacity={0.55}>
+        <line x1={cx - rx * 0.7} y1={cy - ry * 0.9} x2={cx + rx * 0.7} y2={cy + ry * 0.9}
+          stroke="#888" strokeWidth={2.2} strokeLinecap="round" />
+        <line x1={cx + rx * 0.7} y1={cy - ry * 0.9} x2={cx - rx * 0.7} y2={cy + ry * 0.9}
+          stroke="#888" strokeWidth={2.2} strokeLinecap="round" />
+      </g>
+    );
+  }
+  if (noteheadType === "circle-x") {
+    return (
+      <g style={ghostStyle} opacity={0.55}>
+        <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill="none" stroke="#888" strokeWidth={1.3} />
+        <line x1={cx - rx * 0.7} y1={cy - ry * 0.7} x2={cx + rx * 0.7} y2={cy + ry * 0.7}
+          stroke="#888" strokeWidth={1.3} strokeLinecap="round" />
+        <line x1={cx + rx * 0.7} y1={cy - ry * 0.7} x2={cx - rx * 0.7} y2={cy + ry * 0.7}
+          stroke="#888" strokeWidth={1.3} strokeLinecap="round" />
+      </g>
+    );
+  }
+  return (
+    <ellipse cx={cx} cy={cy} rx={rx} ry={ry}
       fill="rgba(0,0,0,0.07)" stroke="#888" strokeWidth={0.9}
       style={{ pointerEvents: "none" }} />
   );
@@ -803,6 +829,8 @@ interface MeasurePanelProps {
   repeatProps:    Partial<ChartMeasure>;
   /** Called when user clicks measure with a repeatSymbol active */
   onMeasureRepeat: () => void;
+  /** Current clef — enables drum notehead labels in percussion mode. */
+  clef?:           ClefType;
 }
 
 function MeasurePanel({
@@ -810,6 +838,7 @@ function MeasurePanel({
   selMeasure, selNote, multiSel, lasso, hoverSlot, hoverRow,
   onHoverChange, onNoteClick, onNoteDouble, onNoteCtxMenu, onBgCtxMenu, onPlace,
   onLassoStart, onLassoMove, onLassoEnd, onDragCommit, repeatProps, onMeasureRepeat,
+  clef = "treble",
 }: MeasurePanelProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const slotW  = measureW / totalSlots;
@@ -1520,12 +1549,29 @@ function MeasurePanel({
         })}
 
         {/* ── Ghost note on hover ───────────────────────────── */}
-        {internalHover && !hoverOccupied && !hoverOverflows && (
-          <GhostHead
-            cx={internalHover.slot * slotW + slotW / 2}
-            cy={internalHover.row * ROW_H + ROW_H / 2}
-          />
-        )}
+        {internalHover && !hoverOccupied && !hoverOverflows && (() => {
+          const rowPitch  = D_ROWS[internalHover.row]?.pitch ?? "";
+          const ghostHead = clef === "percussion" && !tool.isRest
+            ? getDrumNotehead(rowPitch)
+            : "normal";
+          const drumLabel = clef === "percussion" ? getDrumLabel(rowPitch) : "";
+          const ghostCx   = internalHover.slot * slotW + slotW / 2;
+          const ghostCy   = internalHover.row  * ROW_H + ROW_H / 2;
+          return (
+            <g style={{ pointerEvents: "none" }}>
+              <GhostHead cx={ghostCx} cy={ghostCy} noteheadType={ghostHead} />
+              {drumLabel && (
+                <text
+                  x={ghostCx} y={ghostCy - ROW_H * 1.2}
+                  fontSize={9} fill="#4a6cf7" textAnchor="middle"
+                  fontFamily="sans-serif" fontWeight={600}
+                  style={{ userSelect: "none" }}>
+                  {drumLabel}
+                </text>
+              )}
+            </g>
+          );
+        })()}
 
         {/* ── Right barline ────────────────────────────────── */}
         {/* When repeat_both or repeat_end: thick right barline + dots */}
@@ -1715,6 +1761,7 @@ function ScoreSystem({
             onDragCommit={(ni, dSlot, dRow) => onDragCommit(sm.measure.id, ni, dSlot, dRow)}
             repeatProps={repeatPropsMap[sm.measure.id] ?? {}}
             onMeasureRepeat={() => onMeasureRepeat(sm.measure.id)}
+            clef={clef}
           />
         );
       })}
@@ -2136,7 +2183,11 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
       notation_position: slot, notation_duration: eff,
       articulation: tool.articulation || null,
       dynamic: tool.dynamic || null,
-      notehead_type: tool.noteheadType !== "normal" ? tool.noteheadType : null,
+      notehead_type: tool.noteheadType !== "normal"
+        ? tool.noteheadType
+        : clef === "percussion" && !tool.isRest
+          ? (getDrumNotehead(pitch) !== "normal" ? getDrumNotehead(pitch) : null)
+          : null,
       tremolo: tool.tremolo > 0 ? tool.tremolo : null,
       tied_to_next: tool.tiedToNext || null,
       slur: tool.slurStart ? "start" : null,
