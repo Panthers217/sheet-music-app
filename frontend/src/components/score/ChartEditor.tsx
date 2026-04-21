@@ -73,6 +73,7 @@ export type Chart = {
   key_sig: string;
   time_sig: string;
   status: string;
+  clef?: string;
   measures: ChartMeasure[];
 };
 

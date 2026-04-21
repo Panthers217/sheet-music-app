@@ -119,6 +119,15 @@ class ChartBuilder:
                     end_time_s=cn.end_time_s,
                     notation_position=cn.notation_position,
                     notation_duration=cn.notation_duration,
+                    stem_direction=cn.stem_direction,
+                    articulation=cn.articulation,
+                    dynamic=cn.dynamic,
+                    notehead_type=cn.notehead_type,
+                    tremolo=cn.tremolo,
+                    tied_to_next=cn.tied_to_next,
+                    slur=cn.slur,
+                    arpeggio=cn.arpeggio,
+                    ottava=cn.ottava,
                 )
                 for cn in cm.notes
             ]
@@ -128,10 +137,19 @@ class ChartBuilder:
                     chord_symbol=cm.chord_symbol,
                     time_sig_override=cm.time_sig_override,
                     notes=notes,
+                    repeat_start=cm.repeat_start,
+                    repeat_end=cm.repeat_end,
+                    repeat_both=cm.repeat_both,
+                    segno=cm.segno,
+                    coda=cm.coda,
+                    fine=cm.fine,
+                    navigation=cm.navigation,
+                    volta=cm.volta,
                 )
             )
 
-        part = ScorePart(name="Piano", instrument="piano", clef="treble", measures=measures)
+        clef = chart.clef or "treble"
+        part = ScorePart(name="Piano", instrument="piano", clef=clef, measures=measures)
         return ScoreModel(
             title=chart.title,
             tempo=chart.tempo,

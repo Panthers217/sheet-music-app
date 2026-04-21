@@ -60,6 +60,15 @@ class ChartNoteResponse(BaseModel):
     notation_duration: str | None = None
     # User-overridden stem direction
     stem_direction: str | None = None
+    # Notation extras
+    articulation: str | None = None
+    dynamic: str | None = None
+    notehead_type: str | None = None
+    tremolo: int | None = None
+    tied_to_next: bool | None = None
+    slur: str | None = None
+    arpeggio: bool | None = None
+    ottava: str | None = None
 
     class Config:
         from_attributes = True
@@ -71,6 +80,14 @@ class ChartNoteUpdate(BaseModel):
     duration: str = "quarter"
     is_rest: bool = False
     stem_direction: str | None = None
+    articulation: str | None = None
+    dynamic: str | None = None
+    notehead_type: str | None = None
+    tremolo: int | None = None
+    tied_to_next: bool | None = None
+    slur: str | None = None
+    arpeggio: bool | None = None
+    ottava: str | None = None
 
 
 class ChartMeasureResponse(BaseModel):
@@ -84,6 +101,15 @@ class ChartMeasureResponse(BaseModel):
     chord_confidence: float | None = None
     # Stored as JSON string in DB; parsed to list of [chord, score] pairs here
     chord_alternatives: list[list] | None = None
+    # Repeat barlines and navigation markers
+    repeat_start: bool | None = None
+    repeat_end: bool | None = None
+    repeat_both: bool | None = None
+    segno: bool | None = None
+    coda: bool | None = None
+    fine: bool | None = None
+    navigation: str | None = None
+    volta: str | None = None
 
     @field_validator("chord_alternatives", mode="before")
     @classmethod
@@ -103,6 +129,15 @@ class ChartMeasureUpdate(BaseModel):
     chord_symbol: str | None = None
     time_sig_override: str | None = None
     notes: list[ChartNoteUpdate] | None = None
+    # Repeat barlines and navigation markers
+    repeat_start: bool | None = None
+    repeat_end: bool | None = None
+    repeat_both: bool | None = None
+    segno: bool | None = None
+    coda: bool | None = None
+    fine: bool | None = None
+    navigation: str | None = None
+    volta: str | None = None
 
 
 class ChartResponse(BaseModel):
@@ -114,6 +149,7 @@ class ChartResponse(BaseModel):
     key_sig: str
     time_sig: str
     status: str
+    clef: str | None = None
     measures: list[ChartMeasureResponse] = []
 
     class Config:
@@ -125,6 +161,7 @@ class ChartMetadataUpdate(BaseModel):
     tempo: int | None = None
     key_sig: str | None = None
     time_sig: str | None = None
+    clef: str | None = None
 
 
 # ---------------------------------------------------------------------------

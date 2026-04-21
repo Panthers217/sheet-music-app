@@ -295,6 +295,8 @@ def update_chart_metadata(
         chart.key_sig = payload.key_sig
     if payload.time_sig is not None:
         chart.time_sig = payload.time_sig
+    if payload.clef is not None:
+        chart.clef = payload.clef
     chart.status = "user_edited"
 
     db.commit()
@@ -325,6 +327,16 @@ def update_chart_measure(
     if payload.time_sig_override is not None:
         measure.time_sig_override = payload.time_sig_override
 
+    # Repeat barlines and navigation markers
+    measure.repeat_start = payload.repeat_start
+    measure.repeat_end = payload.repeat_end
+    measure.repeat_both = payload.repeat_both
+    measure.segno = payload.segno
+    measure.coda = payload.coda
+    measure.fine = payload.fine
+    measure.navigation = payload.navigation
+    measure.volta = payload.volta
+
     if payload.notes is not None:
         # Replace all notes for this measure
         db.query(ChartNote).filter(ChartNote.measure_id == measure_id).delete()
@@ -340,6 +352,14 @@ def update_chart_measure(
                     notation_position=n.position,
                     notation_duration=n.duration,
                     stem_direction=n.stem_direction,
+                    articulation=n.articulation,
+                    dynamic=n.dynamic,
+                    notehead_type=n.notehead_type,
+                    tremolo=n.tremolo,
+                    tied_to_next=n.tied_to_next,
+                    slur=n.slur,
+                    arpeggio=n.arpeggio,
+                    ottava=n.ottava,
                 )
             )
 

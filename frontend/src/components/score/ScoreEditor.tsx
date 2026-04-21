@@ -1955,11 +1955,20 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
   const [selMid,  setSelMid]  = useState<number | null>(null);
   const [selNi,   setSelNi]   = useState<number | null>(null);
   const [hover,   setHover]   = useState<{ mid: number; slot: number; row: number } | null>(null);
-  const [clef,    setClef]    = useState<ClefType>("treble");
+  const [clef,    setClef]    = useState<ClefType>((chart.clef ?? "treble") as ClefType);
 
   // Repeat / navigation props per measure (keyed by measure id)
   const [repeatProps, setRepeatProps] = useState<Record<number, Partial<ChartMeasure>>>(() =>
-    Object.fromEntries(chart.measures.map((m) => [m.id, {}]))
+    Object.fromEntries(chart.measures.map((m) => [m.id, {
+      repeat_start: m.repeat_start,
+      repeat_end:   m.repeat_end,
+      repeat_both:  m.repeat_both,
+      segno:        m.segno,
+      coda:         m.coda,
+      fine:         m.fine,
+      navigation:   m.navigation,
+      volta:        m.volta,
+    }]))
   );
 
   // Multi-select: Record<measureId, Set<noteIndex>>
@@ -1978,13 +1987,23 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
 
   useEffect(() => {
     setTimeSig(chart.time_sig);
+    setClef((chart.clef ?? "treble") as ClefType);
     history.reset(Object.fromEntries(chart.measures.map((m) => [m.id, m.notes])));
     setDirty({});
     setSelMid(null); setSelNi(null);
     setMultiSelMap({});
     setLassoState(null); setLassoMap({});
     setCtxMenu(null);
-    setRepeatProps(Object.fromEntries(chart.measures.map((m) => [m.id, {}])));
+    setRepeatProps(Object.fromEntries(chart.measures.map((m) => [m.id, {
+      repeat_start: m.repeat_start,
+      repeat_end:   m.repeat_end,
+      repeat_both:  m.repeat_both,
+      segno:        m.segno,
+      coda:         m.coda,
+      fine:         m.fine,
+      navigation:   m.navigation,
+      volta:        m.volta,
+    }])));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chart.id]);
 
@@ -2335,18 +2354,35 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
     setMessage(null);
     try {
       const notes = localNotes[mid] ?? [];
+      const rp = repeatProps[mid] ?? {};
       const updated = await apiFetch<Chart>(
         `/api/charts/${chart.id}/measures/${mid}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            repeat_start: rp.repeat_start ?? null,
+            repeat_end:   rp.repeat_end   ?? null,
+            repeat_both:  rp.repeat_both  ?? null,
+            segno:        rp.segno        ?? null,
+            coda:         rp.coda         ?? null,
+            fine:         rp.fine         ?? null,
+            navigation:   rp.navigation   ?? null,
+            volta:        rp.volta        ?? null,
             notes: notes.map((n) => ({
-              position: n.notation_position ?? n.position,
-              pitch: n.pitch,
-              duration: n.notation_duration ?? n.duration,
-              is_rest: n.is_rest,
-              stem_direction: n.stem_direction ?? null,
+              position:      n.notation_position ?? n.position,
+              pitch:         n.pitch,
+              duration:      n.notation_duration ?? n.duration,
+              is_rest:       n.is_rest,
+              stem_direction: n.stem_direction    ?? null,
+              articulation:  n.articulation      ?? null,
+              dynamic:       n.dynamic           ?? null,
+              notehead_type: n.notehead_type      ?? null,
+              tremolo:       n.tremolo            ?? null,
+              tied_to_next:  n.tied_to_next       ?? null,
+              slur:          n.slur               ?? null,
+              arpeggio:      n.arpeggio           ?? null,
+              ottava:        n.ottava             ?? null,
             })),
           }),
         }
@@ -2392,7 +2428,19 @@ export default function ScoreEditor({ chart, onSaved }: ScoreEditorProps) {
         timeSig={timeSig}
         onTimeSigChange={(ts) => { void handleTimeSigChange(ts); }}
         clef={clef}
-        onClefChange={setClef}
+        onClefChange={async (c) => {
+          setClef(c);
+          try {
+            const updated = await apiFetch<Chart>(`/api/charts/${chart.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ clef: c }),
+            });
+            onSaved(updated);
+          } catch {
+            // non-critical; clef is still applied locally
+          }
+        }}
       />
 
       {/* ── Status / save row ──────────────────────────────────── */}

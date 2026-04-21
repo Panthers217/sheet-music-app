@@ -28,6 +28,16 @@ class ScoreNote:
     # Set by NotationQuantizer; used by MusicXML generator instead of raw snapped values.
     notation_duration: Optional[str] = None  # quantized symbolic duration for MusicXML
     notation_position: Optional[int] = None  # quantized 16th-note grid position for MusicXML
+    # Notation extras
+    stem_direction: Optional[str] = None
+    articulation: Optional[str] = None
+    dynamic: Optional[str] = None
+    notehead_type: Optional[str] = None
+    tremolo: Optional[int] = None
+    tied_to_next: Optional[bool] = None
+    slur: Optional[str] = None          # "start" | "end"
+    arpeggio: Optional[bool] = None
+    ottava: Optional[str] = None        # "8va" | "8vb" | "15ma" | "15mb"
 
 
 @dataclass
@@ -38,6 +48,15 @@ class ScoreMeasure:
     chord_symbol: Optional[str] = None
     time_sig_override: Optional[str] = None  # overrides chart-level time_sig for this measure
     notes: list[ScoreNote] = field(default_factory=list)
+    # Repeat barlines and navigation markers
+    repeat_start: Optional[bool] = None
+    repeat_end: Optional[bool] = None
+    repeat_both: Optional[bool] = None
+    segno: Optional[bool] = None
+    coda: Optional[bool] = None
+    fine: Optional[bool] = None
+    navigation: Optional[str] = None   # "dc" | "ds" | "dc-al-fine" | "ds-al-coda" | "dc-al-coda"
+    volta: Optional[str] = None        # "1" | "2" | "open"
 
 
 @dataclass

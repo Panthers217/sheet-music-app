@@ -29,6 +29,26 @@ _MIGRATIONS = [
     "ALTER TABLE chart_notes ADD COLUMN notation_duration TEXT",
     # User stem direction override
     "ALTER TABLE chart_notes ADD COLUMN stem_direction TEXT",
+    # Note notation extras
+    "ALTER TABLE chart_notes ADD COLUMN articulation TEXT",
+    "ALTER TABLE chart_notes ADD COLUMN dynamic TEXT",
+    "ALTER TABLE chart_notes ADD COLUMN notehead_type TEXT",
+    "ALTER TABLE chart_notes ADD COLUMN tremolo INTEGER",
+    "ALTER TABLE chart_notes ADD COLUMN tied_to_next BOOLEAN",
+    "ALTER TABLE chart_notes ADD COLUMN slur TEXT",
+    "ALTER TABLE chart_notes ADD COLUMN arpeggio BOOLEAN",
+    "ALTER TABLE chart_notes ADD COLUMN ottava TEXT",
+    # Measure repeat / navigation markers
+    "ALTER TABLE chart_measures ADD COLUMN repeat_start BOOLEAN",
+    "ALTER TABLE chart_measures ADD COLUMN repeat_end BOOLEAN",
+    "ALTER TABLE chart_measures ADD COLUMN repeat_both BOOLEAN",
+    "ALTER TABLE chart_measures ADD COLUMN segno BOOLEAN",
+    "ALTER TABLE chart_measures ADD COLUMN coda BOOLEAN",
+    "ALTER TABLE chart_measures ADD COLUMN fine BOOLEAN",
+    "ALTER TABLE chart_measures ADD COLUMN navigation TEXT",
+    "ALTER TABLE chart_measures ADD COLUMN volta TEXT",
+    # Chart-level clef
+    "ALTER TABLE charts ADD COLUMN clef TEXT",
 ]
 
 

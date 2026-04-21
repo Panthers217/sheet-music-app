@@ -68,6 +68,50 @@ _DURATION_TYPE: dict[str, str] = {
 # Durations eligible for beaming
 _BEAMABLE: frozenset[str] = frozenset({"eighth", "16th"})
 
+# ─── Notehead mapping ─────────────────────────────────────────────────────────
+# Maps notehead_type string → (MusicXML type, filled attribute or None)
+_NOTEHEAD_MAP: dict[str, tuple[str, str | None]] = {
+    "x":            ("x", None),
+    "circle-x":     ("circle-x", None),
+    "diamond":      ("diamond", "yes"),
+    "diamond-open": ("diamond", None),
+    "triangle":     ("triangle", None),
+    "square":       ("square", None),
+    "slash":        ("slash", None),
+    "normal":       ("normal", None),
+}
+
+# ─── Articulation routing ─────────────────────────────────────────────────────
+# Mapped as child element names inside <articulations>
+_ARTIC_ARTICULATIONS: frozenset[str] = frozenset({
+    "staccato", "staccatissimo", "tenuto", "accent", "strong-accent",
+    "stress", "unstress", "detached-legato", "soft-accent",
+    "spiccato", "scoop", "plop", "doit", "falloff", "breath-mark", "caesura",
+})
+# Mapped inside <technical>
+_ARTIC_TECHNICAL: frozenset[str] = frozenset({
+    "up-bow", "down-bow", "harmonic", "snap-pizzicato", "stopped",
+    "open-string", "thumb-position",
+})
+# Mapped inside <ornaments>
+_ARTIC_ORNAMENTS: frozenset[str] = frozenset({
+    "trill-mark", "mordent", "inverted-mordent", "turn", "inverted-turn",
+    "shake", "wavy-line", "tremolo",
+})
+
+# ─── Dynamics ─────────────────────────────────────────────────────────────────
+# Standard dynamics that map to <dynamics> child elements
+_DYNAMICS_ELEMENTS: frozenset[str] = frozenset({
+    "pppp", "ppp", "pp", "p", "mp", "mf", "f", "ff", "fff", "ffff",
+    "sfp", "sfpp", "sfz", "sffz", "fz", "rf", "rfz", "n", "pf",
+})
+# Hairpins / text dynamics mapped to <words>
+_DYNAMICS_WORDS: dict[str, str] = {
+    "<":  "cresc.",
+    ">":  "dim.",
+    "fp": "fp",
+}
+
 
 # ─── Beaming helpers ──────────────────────────────────────────────────────────
 
@@ -291,10 +335,30 @@ def _build_note_element(
         _sub(pitch_el, "octave", str(octave))
 
     _sub(el, "duration", str(ticks))
+
+    # Tie start (must come after <duration>, before <type>)
+    if note.tied_to_next and not note.is_rest:
+        ET.SubElement(el, "tie", type="start")
+
     _sub(el, "type", note_type)
     # Dotted durations require a <dot/> child element in MusicXML
     if effective_duration.startswith("dotted-"):
         ET.SubElement(el, "dot")
+
+    # Stem direction override
+    if note.stem_direction and not note.is_rest:
+        stem_el = ET.SubElement(el, "stem")
+        stem_el.text = note.stem_direction
+
+    # Notehead (must come after <stem> in MusicXML order)
+    nh_type = note.notehead_type
+    if nh_type and nh_type != "normal" and not note.is_rest:
+        nh_xml, filled = _NOTEHEAD_MAP.get(nh_type, (nh_type, None))
+        attrib: dict[str, str] = {}
+        if filled is not None:
+            attrib["filled"] = filled
+        nh_el = ET.SubElement(el, "notehead", **attrib)
+        nh_el.text = nh_xml
 
     # Beam elements — only for beamable notes in a group
     if beam_role != "none" and effective_duration in _BEAMABLE:
@@ -305,7 +369,129 @@ def _build_note_element(
             beam2 = ET.SubElement(el, "beam", number="2")
             beam2.text = beam_role
 
+    # Notations block (ties, slurs, articulations, arpeggio, tremolo)
+    if not note.is_rest:
+        _build_notations(note, el)
+
     return el
+
+
+def _build_notations(note: ScoreNote, parent: ET.Element) -> None:
+    """Append a <notations> block to *parent* if the note has any notation extras."""
+    notations_needed = (
+        note.tied_to_next
+        or note.slur
+        or note.articulation
+        or note.arpeggio
+        or note.tremolo
+    )
+    if not notations_needed:
+        return
+
+    notations = ET.SubElement(parent, "notations")
+
+    if note.tied_to_next:
+        ET.SubElement(notations, "tied", type="start")
+
+    if note.slur:
+        ET.SubElement(notations, "slur", type=note.slur, number="1")
+
+    if note.arpeggio:
+        ET.SubElement(notations, "arpeggiate")
+
+    # Articulations block
+    artic = note.articulation
+    if artic:
+        if artic == "fermata":
+            ET.SubElement(notations, "fermata")
+        elif artic in _ARTIC_ARTICULATIONS:
+            artic_el = ET.SubElement(notations, "articulations")
+            ET.SubElement(artic_el, artic)
+        elif artic in _ARTIC_TECHNICAL:
+            tech_el = ET.SubElement(notations, "technical")
+            ET.SubElement(tech_el, artic)
+        elif artic in _ARTIC_ORNAMENTS:
+            if artic == "tremolo" and note.tremolo:
+                orn_el = ET.SubElement(notations, "ornaments")
+                tr = ET.SubElement(orn_el, "tremolo", type="single")
+                tr.text = str(note.tremolo)
+            else:
+                orn_el = ET.SubElement(notations, "ornaments")
+                ET.SubElement(orn_el, artic)
+    elif note.tremolo:
+        orn_el = ET.SubElement(notations, "ornaments")
+        tr = ET.SubElement(orn_el, "tremolo", type="single")
+        tr.text = str(note.tremolo)
+
+
+def _add_dynamic_direction(parent: ET.Element, dynamic: str) -> None:
+    """Append a <direction> element for the given dynamic marking."""
+    direction = ET.SubElement(parent, "direction", placement="below")
+    dir_type = ET.SubElement(direction, "direction-type")
+    if dynamic in _DYNAMICS_ELEMENTS:
+        dyn_el = ET.SubElement(dir_type, "dynamics")
+        ET.SubElement(dyn_el, dynamic)
+    else:
+        words_text = _DYNAMICS_WORDS.get(dynamic, dynamic)
+        words = ET.SubElement(dir_type, "words")
+        words.text = words_text
+
+
+def _add_octave_shift(parent: ET.Element, ottava: str) -> None:
+    """Append an ottava (octave-shift) direction pair to *parent*."""
+    _OTTAVA_MAP: dict[str, tuple[str, int]] = {
+        "8va":  ("up",   8),
+        "8vb":  ("down", 8),
+        "15ma": ("up",  15),
+        "15mb": ("down", 15),
+    }
+    if ottava not in _OTTAVA_MAP:
+        return
+    shift_type, size = _OTTAVA_MAP[ottava]
+    # start
+    dir_start = ET.SubElement(parent, "direction", placement="above")
+    dt_start = ET.SubElement(dir_start, "direction-type")
+    ET.SubElement(dt_start, "octave-shift", type=shift_type, size=str(size), number="1")
+    # stop (immediately after the note in MusicXML)
+    dir_stop = ET.SubElement(parent, "direction", placement="above")
+    dt_stop = ET.SubElement(dir_stop, "direction-type")
+    ET.SubElement(dt_stop, "octave-shift", type="stop", size=str(size), number="1")
+
+
+def _add_repeat_barline(parent: ET.Element, location: str, direction: str) -> None:
+    """Append a repeat barline element to a measure."""
+    barline = ET.SubElement(parent, "barline", location=location)
+    bar_style = ET.SubElement(barline, "bar-style")
+    bar_style.text = "heavy-light" if direction == "forward" else "light-heavy"
+    ET.SubElement(barline, "repeat", direction=direction)
+
+
+def _add_navigation_direction(parent: ET.Element, navigation: str) -> None:
+    """Append a D.C./D.S./Fine/etc. direction element."""
+    _NAV_TEXT: dict[str, str] = {
+        "dc":          "D.C.",
+        "ds":          "D.S.",
+        "dc-al-fine":  "D.C. al Fine",
+        "ds-al-coda":  "D.S. al Coda",
+        "dc-al-coda":  "D.C. al Coda",
+    }
+    _NAV_SOUND: dict[str, dict[str, str]] = {
+        "dc":         {"dacapo": "yes"},
+        "ds":         {"dalsegno": "yes"},
+        "dc-al-fine": {"dacapo": "yes"},
+        "ds-al-coda": {"dalsegno": "yes"},
+        "dc-al-coda": {"dacapo": "yes"},
+    }
+    text = _NAV_TEXT.get(navigation)
+    sound_attrs = _NAV_SOUND.get(navigation)
+    if text is None:
+        return
+    direction = ET.SubElement(parent, "direction", placement="above")
+    dir_type = ET.SubElement(direction, "direction-type")
+    words = ET.SubElement(dir_type, "words")
+    words.text = text
+    if sound_attrs:
+        ET.SubElement(direction, "sound", **sound_attrs)
 
 
 def _build_harmony_element(chord_symbol: str) -> ET.Element:
@@ -378,8 +564,24 @@ def _build_measure(
 
         if is_first:
             clef_el = _sub(attrs, "clef")
-            _sub(clef_el, "sign", "G" if part_clef == "treble" else "F")
-            _sub(clef_el, "line", "2" if part_clef == "treble" else "4")
+            if part_clef == "treble":
+                _sub(clef_el, "sign", "G")
+                _sub(clef_el, "line", "2")
+            elif part_clef == "bass":
+                _sub(clef_el, "sign", "F")
+                _sub(clef_el, "line", "4")
+            elif part_clef == "alto":
+                _sub(clef_el, "sign", "C")
+                _sub(clef_el, "line", "3")
+            elif part_clef == "tenor":
+                _sub(clef_el, "sign", "C")
+                _sub(clef_el, "line", "4")
+            elif part_clef == "percussion":
+                _sub(clef_el, "sign", "percussion")
+
+    # --- Repeat barlines at start of measure ---
+    if measure.repeat_start or measure.repeat_both:
+        _add_repeat_barline(m_el, "left", "forward")
 
     # --- Tempo direction on first measure ---
     if is_first:
@@ -393,6 +595,29 @@ def _build_measure(
     # --- Chord symbol ---
     if measure.chord_symbol:
         m_el.append(_build_harmony_element(measure.chord_symbol))
+
+    # --- Segno / Coda markers ---
+    if measure.segno:
+        seg_dir = ET.SubElement(m_el, "direction", placement="above")
+        seg_dt = ET.SubElement(seg_dir, "direction-type")
+        ET.SubElement(seg_dt, "segno")
+        ET.SubElement(seg_dir, "sound", segno="yes")
+
+    if measure.coda:
+        coda_dir = ET.SubElement(m_el, "direction", placement="above")
+        coda_dt = ET.SubElement(coda_dir, "direction-type")
+        ET.SubElement(coda_dt, "coda")
+        ET.SubElement(coda_dir, "sound", coda="yes")
+
+    # --- Volta (1st/2nd ending) bracket ---
+    if measure.volta:
+        volta_dir = ET.SubElement(m_el, "direction", placement="above")
+        volta_dt = ET.SubElement(volta_dir, "direction-type")
+        bracket = ET.SubElement(volta_dt, "bracket",
+                                type="start",
+                                number="1",
+                                **{"line-end": "down"})
+        ET.SubElement(volta_dir, "sound", **{"time-only": str(measure.volta)})
 
     # --- Notes ---
     if measure.notes:
@@ -428,6 +653,12 @@ def _build_measure(
             m_el.append(_build_note_element(note, beam_role=role, duration_override=duration_override))
             notes_written += 1
             cursor = pos + ticks
+            # Dynamics direction immediately after the note
+            if note.dynamic:
+                _add_dynamic_direction(m_el, note.dynamic)
+            # Octave shift direction immediately after the note
+            if note.ottava:
+                _add_octave_shift(m_el, note.ottava)
         # Fill any remaining space after the last note
         if cursor < capacity:
             _write_fill_rests(m_el, cursor, capacity)
@@ -441,6 +672,22 @@ def _build_measure(
         ET.SubElement(rest_el, "rest", measure="yes")
         _sub(rest_el, "duration", str(_DURATION_TICKS["whole"]))
         _sub(rest_el, "type", "whole")
+
+    # --- Fine marking ---
+    if measure.fine:
+        fine_dir = ET.SubElement(m_el, "direction", placement="above")
+        fine_dt = ET.SubElement(fine_dir, "direction-type")
+        words = ET.SubElement(fine_dt, "words")
+        words.text = "Fine"
+        ET.SubElement(fine_dir, "sound", fine="yes")
+
+    # --- Navigation (D.C. / D.S. / etc.) ---
+    if measure.navigation:
+        _add_navigation_direction(m_el, measure.navigation)
+
+    # --- Repeat barline at end of measure ---
+    if measure.repeat_end or measure.repeat_both:
+        _add_repeat_barline(m_el, "right", "backward")
 
     return m_el
 

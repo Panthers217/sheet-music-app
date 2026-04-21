@@ -99,6 +99,8 @@ class Chart(Base):
     time_sig: Mapped[str] = mapped_column(String(10), default="4/4")
     # "pending" | "generated" | "user_edited"
     status: Mapped[str] = mapped_column(String(50), default="generated")
+    # Clef for all parts: "treble" | "bass" | "alto" | "tenor" | "percussion"
+    clef: Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -125,6 +127,15 @@ class ChartMeasure(Base):
     chord_confidence: Mapped[float | None] = mapped_column("chord_confidence", nullable=True)
     # JSON list of [[chord, score], ...] for top alternative candidates
     chord_alternatives: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Repeat barlines and navigation markers
+    repeat_start: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    repeat_end: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    repeat_both: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    segno: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    coda: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    fine: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    navigation: Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
+    volta: Mapped[str | None] = mapped_column(String(10), nullable=True, default=None)
 
     chart: Mapped["Chart"] = relationship(back_populates="measures")
     notes: Mapped[list["ChartNote"]] = relationship(
@@ -158,6 +169,15 @@ class ChartNote(Base):
     notation_duration: Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
     # User-overridden stem direction: "up" | "down" | None (auto)
     stem_direction: Mapped[str | None] = mapped_column(String(10), nullable=True, default=None)
+    # Notation extras (articulation, notehead type, dynamics, etc.)
+    articulation: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    dynamic: Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
+    notehead_type: Mapped[str | None] = mapped_column(String(30), nullable=True, default=None)
+    tremolo: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    tied_to_next: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    slur: Mapped[str | None] = mapped_column(String(10), nullable=True, default=None)
+    arpeggio: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    ottava: Mapped[str | None] = mapped_column(String(10), nullable=True, default=None)
 
     measure: Mapped["ChartMeasure"] = relationship(back_populates="notes")
 
